@@ -72,7 +72,7 @@ See the original paper [Predicting Chain Dimensions of Semiflexible Polymers fro
 *   l = [2.533, 1.432, 3.533, 1.432, 2.533, 1.432, 2.533, 1.433, 1.363, 1.433, 2.533, 1.432] # in Angstrom
 *   2.533 is the bond length of Thiophene (l[0])
 *   1.432 is the bond length of first linker (l[1])
-*   Angle = np.deg2rad(np.array([-14.92, -10.83, 30.79, -30.79, 10.83, 14.92, -14.91, -13.29, -53.16, 53.16, 13.29, 14.91])) # convert degree to radian
+*   Angle = np.array([-14.92, -10.83, 30.79, -30.79, 10.83, 14.92, -14.91, -13.29, -53.16, 53.16, 13.29, 14.91]) # deflection angle in degrees
 *   labels = {1: {'loc': 'T-DPP.txt', 'color': 'b'}, 2: {'loc': 'T-T.txt', 'color': 'm'}, 3: {'loc': 'T-E.txt', 'color': 'c'}}
 *   txt files are dihedral potential with degrees and energies in kJ/mol
 *   rotation = np.array([0, 1, 0, 1, 0, 2, 0, 3, 0, 3, 0, 2])
