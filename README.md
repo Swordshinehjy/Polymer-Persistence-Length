@@ -22,13 +22,12 @@ $$
 and
 
 $$
-\int_0^{2\pi} R_z(\phi)p(\phi)\,d\phi
-=
+\int_0^{2\pi} R_z(\phi)p(\phi)d\phi =
 \begin{pmatrix}
-\langle\cos\phi\rangle & -\langle\sin\phi\rangle & 0\\[4pt]
-\langle\sin\phi\rangle & \langle\cos\phi\rangle & 0\\[4pt]
+\langle\cos\phi\rangle & -\langle\sin\phi\rangle & 0 \\
+\langle\sin\phi\rangle & \langle\cos\phi\rangle & 0 \\
 0 & 0 & 1
-\end{pmatrix},
+\end{pmatrix}
 $$
 
 where
