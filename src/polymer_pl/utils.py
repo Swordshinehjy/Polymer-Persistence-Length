@@ -163,6 +163,10 @@ class PolymerPersistence:
                 x_values = np.linspace(0, 360, 1000)
                 prob_vals = np.exp(-fitf(x_values) / self.kTval) / norm_val
                 cum_dist = cumulative_trapezoid(prob_vals, x_values, initial=0)
+                _, unique_indices = np.unique(cum_dist, return_index=True)
+                x_values = x_values[unique_indices]
+                cum_dist = cum_dist[unique_indices]
+                prob_vals = prob_vals[unique_indices]
                 inv_cdf = interp1d(cum_dist / cum_dist[-1],
                                    x_values,
                                    kind='cubic',

@@ -68,6 +68,7 @@ class GaussianStructureAnalyzer:
             self.final_structure, self.atom_types = all_coordinates[-1]
             print(f"Successfully read final optimized structure with {len(self.final_structure)} atoms")
             print(f"Atom position number range: 1 to {len(self.final_structure)}")
+            self.final_structure = np.array(self.final_structure)
             return True
 
         except FileNotFoundError:
@@ -188,80 +189,86 @@ class GaussianStructureAnalyzer:
 
         return coordinates, atom_types
 
-    def calculate_bond_vectors(self,
-                               atom_sequence: List[int]) -> List[np.ndarray]:
-        if not self.final_structure:
-            raise ValueError("Please read Gaussian output file first")
-
-        bond_vectors = []
-
-        for i in range(len(atom_sequence) - 1):
-            atom1_idx = atom_sequence[i] - 1  # Convert to 0-based index
-            atom2_idx = atom_sequence[i + 1] - 1
-
-            if atom1_idx >= len(self.final_structure) or atom2_idx >= len(
-                    self.final_structure):
-                raise ValueError(
-                    f"Atom number out of range: {atom_sequence[i]} or {atom_sequence[i+1]}")
-
-            vector = self.final_structure[atom2_idx] - self.final_structure[
-                atom1_idx]
-            # Normalize
-            vector_normalized = vector / np.linalg.norm(vector)
-            bond_vectors.append(vector_normalized)
-
-        return bond_vectors
-
-    def calculate_deflection_angles(self,
-                                    atom_sequence: List[int]) -> List[float]:
+    def _validate_atom_sequence(self, atom_sequence: List[int]) -> np.ndarray:
         """
-        1. Use bond_vectors[1] × bond_vectors[0] to define the Z-axis direction of the reference coordinate system.
-        2. For each deflection angle, calculate the cross product of the current two bond vectors.
-        3. Dot product the cross product vector with the reference Z-axis.
-        4. If the dot product is positive, the angle is positive; if negative, the angle is negative.
+        Validate input atom indices and convert to 0-based numpy array.
+        """
+        if self.final_structure is None:
+            raise ValueError("Please read the Gaussian output file first.")
+
+        # Ensure all indices are integers
+        if not all(isinstance(atom, (int, np.integer)) for atom in atom_sequence):
+            raise TypeError("All atom indices must be integers.")
+
+        # Convert to 0-based index
+        indices = np.asarray(atom_sequence, dtype=int) - 1
+
+        # Check range
+        n_atoms = self.final_structure.shape[0]
+        if np.any(indices < 0) or np.any(indices >= n_atoms):
+            raise ValueError(f"Atom number out of range: {atom_sequence}")
+
+        return indices
+
+
+    def calculate_bond_vectors(self, atom_sequence: List[int]) -> np.ndarray:
+        """
+        Calculate normalized bond vectors for a sequence of atoms.
+        """
+        indices = self._validate_atom_sequence(atom_sequence)
+
+        # Compute bond vectors
+        bond_vectors = self.final_structure[indices[1:]] - self.final_structure[indices[:-1]]
+
+        # Normalize (avoid division by zero)
+        norms = np.linalg.norm(bond_vectors, axis=1, keepdims=True)
+        bond_vectors_normalized = bond_vectors / np.where(norms == 0, 1, norms)
+
+        return bond_vectors_normalized
+
+
+    def calculate_deflection_angles(self, atom_sequence: List[int]) -> np.ndarray:
+        """
+        Calculate signed deflection angles between sequential bond vectors.
+
+        Steps:
+        1. Use cross(bond1, bond0) to define the reference Z-axis.
+        2. For each pair of adjacent bond vectors, compute cross products.
+        3. Sign of angle determined by dot(cross_current, z_ref).
         """
         if len(atom_sequence) < 3:
-            raise ValueError("At least 3 atoms are required to calculate deflection angles")
+            raise ValueError("At least 3 atoms are required to calculate deflection angles.")
+
         bond_vectors = self.calculate_bond_vectors(atom_sequence)
+
         if len(bond_vectors) < 2:
-            print("Warning: Less than 2 bond vectors, cannot calculate any deflection angles.")
-            return []
-        v0 = bond_vectors[0]
-        v1 = bond_vectors[1]
-        z_ref = np.cross(v0, v1)
-        z_ref_norm = np.linalg.norm(z_ref)
-        if z_ref_norm < 1e-6:  # Use a small tolerance
-            print("Warning: The first two bond vectors are collinear and cannot define a unique reference plane. All angles will be 0 or 180 degrees, unsigned.")
-            z_ref_normalized = np.array([0, 0, 0])
-        else:
-            z_ref_normalized = z_ref / z_ref_norm
+            return np.array([])
 
-        deflection_angles = []
-        for i in range(len(bond_vectors) - 1):
-            ri = bond_vectors[i]
-            ri_plus_1 = bond_vectors[i + 1]
-            dot_product = np.dot(ri, ri_plus_1)
-            dot_product = np.clip(dot_product, -1.0, 1.0)
-            angle_rad = np.arccos(dot_product)
-            angle_deg = np.degrees(angle_rad)
-            current_cross = np.cross(ri, ri_plus_1)
-            sign_determinant = np.dot(current_cross, z_ref_normalized)
-            signed_angle = angle_deg * np.sign(sign_determinant)
-            deflection_angles.append(signed_angle)
+        # Reference Z direction
+        z_ref = np.cross(bond_vectors[0], bond_vectors[1])
+        norm_z = np.linalg.norm(z_ref)
+        z_ref = z_ref / norm_z if norm_z > 1e-6 else np.zeros(3)
 
-        return deflection_angles
-    def calculate_bond_lengths(self, atom_sequence: List[int]) -> List[float]:
-        if not self.final_structure:
-            raise ValueError("Please read Gaussian output file first")
-        bond_lengths = []
-        for i in range(len(atom_sequence) - 1):
-            atom1_idx = atom_sequence[i] - 1
-            atom2_idx = atom_sequence[i + 1] - 1
-            if atom1_idx >= len(self.final_structure) or atom2_idx >= len(self.final_structure):
-                raise ValueError(f"Atom number out of range: {atom_sequence[i]} or {atom_sequence[i+1]}")
-            coord1 = self.final_structure[atom1_idx]
-            coord2 = self.final_structure[atom2_idx]
-            distance = np.linalg.norm(coord2 - coord1)
-            bond_lengths.append(distance)
+        # Adjacent pairs
+        v1 = bond_vectors[:-1]
+        v2 = bond_vectors[1:]
 
-        return bond_lengths
+        # Angle magnitudes (via dot product)
+        dots = np.einsum("ij,ij->i", v1, v2)
+        dots = np.clip(dots, -1.0, 1.0)
+        angles_deg = np.degrees(np.arccos(dots))
+
+        # Signs (via reference Z axis)
+        crosses = np.cross(v1, v2)
+        signs = np.sign(np.einsum("ij,j->i", crosses, z_ref))
+
+        return angles_deg * signs
+
+
+    def calculate_bond_lengths(self, atom_sequence: List[int]) -> np.ndarray:
+        """
+        Compute bond lengths between sequential atoms in the sequence.
+        """
+        indices = self._validate_atom_sequence(atom_sequence)
+        diffs = self.final_structure[indices[:-1]] - self.final_structure[indices[1:]]
+        return np.linalg.norm(diffs, axis=1)
