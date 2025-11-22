@@ -159,7 +159,7 @@ class PolymerPersistence:
                     fitf = (lambda p_val: lambda z: np.polynomial.polynomial.
                             polyval(np.cos(np.deg2rad(z)), p_val))(p)
                 norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval), 0,
-                                   360)
+                                   360, limit=1000)
                 x_values = np.linspace(0, 360, 1000)
                 prob_vals = np.exp(-fitf(x_values) / self.kTval) / norm_val
                 cum_dist = cumulative_trapezoid(prob_vals, x_values, initial=0)
@@ -398,10 +398,11 @@ class PolymerPersistence:
         for key, data in self._full_data.items():
             plt.plot(data['data'][:, 0],
                      data['data'][:, 1],
-                     f"{data['color']}o",
+                     f"{data['color']}",
+                     marker="o",
                      label=data['label'])
             plt.plot(data['x_values'], data['fitf'](data['x_values']),
-                     f"{data['color']}--")
+                     color=f"{data['color']}", linestyle="--")
         self.format_subplot("Dihedral Angle [Deg.]",
                             "Dihedral Potential (kJ/mol)",
                             "Dihedral Potentials")
@@ -409,7 +410,8 @@ class PolymerPersistence:
         for key, data in self._full_data.items():
             plt.plot(data['x_values'],
                      data['prob_vals'],
-                     f"{data['color']}-",
+                     color=f"{data['color']}",
+                     linestyle="-",
                      label=data['label'])
         self.format_subplot("Angle [deg.]", "Probability",
                             "Probability Distributions")
@@ -417,7 +419,8 @@ class PolymerPersistence:
         for key, data in self._full_data.items():
             plt.plot(data['cum_dist'] / data['cum_dist'][-1],
                      data['x_values'],
-                     f"{data['color']}-",
+                     color=f"{data['color']}",
+                     linestyle="-",
                      label=data['label'])
         self.format_subplot("Probability", "Dihedral Angle [deg.]",
                             "Cumulative Probability Distributions")
