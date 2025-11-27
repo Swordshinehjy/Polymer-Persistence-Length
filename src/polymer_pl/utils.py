@@ -8,7 +8,6 @@ import scipy.constants as sc
 from numpy.linalg import eigvals
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
-from scipy.spatial.transform import Rotation as R
 
 # Import the Cython module (after compilation)
 try:
@@ -158,8 +157,10 @@ class PolymerPersistence:
                         np.cos(np.deg2rad(x)), y, self.cosine_deg)
                     fitf = (lambda p_val: lambda z: np.polynomial.polynomial.
                             polyval(np.cos(np.deg2rad(z)), p_val))(p)
-                norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval), 0,
-                                   360, limit=1000)
+                norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval),
+                                   0,
+                                   360,
+                                   limit=1000)
                 x_values = np.linspace(0, 360, 1000)
                 prob_vals = np.exp(-fitf(x_values) / self.kTval) / norm_val
                 cum_dist = cumulative_trapezoid(prob_vals, x_values, initial=0)
@@ -401,8 +402,10 @@ class PolymerPersistence:
                      f"{data['color']}",
                      marker="o",
                      label=data['label'])
-            plt.plot(data['x_values'], data['fitf'](data['x_values']),
-                     color=f"{data['color']}", linestyle="--")
+            plt.plot(data['x_values'],
+                     data['fitf'](data['x_values']),
+                     color=f"{data['color']}",
+                     linestyle="--")
         self.format_subplot("Dihedral Angle [Deg.]",
                             "Dihedral Potential (kJ/mol)",
                             "Dihedral Potentials")
@@ -433,11 +436,11 @@ class PolymerPersistence:
         # Ensure calculation has been run
         lp = self.persistence_length_repeats
         lam = self.lambda_max
-        print("--- Persistence Length Calculation Report ---")
+        print("---- Persistence Length Calculation Report ----")
         print(f"Temperature: {self.temperature} K")
         print(f"Max Eigenvalue (lambda_max): {lam:.12f}")
         print(f"Persistence Length (in repeat units): {lp:.6f}")
-        print("-------------------------------------------")
+        print("-----------------------------------------------")
 
     def generate_chain(self, n_repeat_units):
         """Generate a polymer chain with n_repeat_units."""
@@ -664,6 +667,45 @@ class PolymerPersistence:
             print(f"Error in plot_correlation_function: {str(e)}")
             return
 
+    def temperature_scan(self, T_list):
+        """
+        T_list: iterable of temperatures (K)
+        Returns: dict with keys 'T', 'lp', 'Mmat'
+        """
+        Ts = np.asarray(T_list, dtype=np.float64)
+        results = {'T': Ts, 'lp': [], 'Mmat': []}
+
+        # store original kTval
+        kT_orig = self.kTval
+        for T in Ts:
+            self.temperature = float(T)
+            self.kTval = sc.R * self.temperature / 1000.0  # kJ/mol
+            # clear cached integrals because they depend on kT
+            # simplest approach: reset computational caches that depend on kT
+            self._computational_data = {}
+            self._full_data = {}
+
+            # recompute M matrix (vectorized)
+            try:
+                self._calculate_Mmat()
+                results['Mmat'].append(self._Mmat)
+            except Exception:
+                raise ValueError("Failed to compute M matrix")
+            # find lambda_max and lp
+            eigs = eigvals(self._Mmat)
+            lambda_max = float(np.max(np.abs(eigs)))
+            if lambda_max >= 1.0:
+                lp = np.inf
+            else:
+                lp = -1.0 / np.log(lambda_max)
+            results['lp'].append(lp)
+
+        # restore original
+        self.temperature = float(self.temperature)
+        self.kTval = kT_orig
+        self._calculate_Mmat()
+        return results
+
 
 def compute_persistence_terpolymer(Mmat, prob):
     """
@@ -712,6 +754,125 @@ def compute_persistence_terpolymer(Mmat, prob):
 
     lp_in_repeats = -1.0 / np.log(lambda_max)
     return lp_in_repeats
+
+
+def compute_persistence_terpolymer_Tscan(polymer_models,
+                                         prob_list,
+                                         T_list,
+                                         plot=True):
+    """
+    Computes persistence length for a terpolymer across a range of temperatures.
+    
+    This function integrates temperature_scan and compute_persistence_terpolymer
+    to calculate how the persistence length of a terpolymer changes with temperature.
+    
+    Parameters:
+    -----------
+    polymer_models : listlike
+        List of PolymerPersistence objects for each repeat unit type
+    prob_list : listlike
+        List of probabilities for each repeat unit type (must sum to 1.0)
+        example [[0, 1], [0.5, 0.5], [1, 0]]
+    T_list : listlike
+        List of temperatures (in Kelvin) to evaluate
+    plot : bool, optional
+        Whether to plot the 2D results, by default True
+        
+    Returns:
+    --------
+    2D numpy array, row: temperature, column: persistence length
+    """
+    # Type checking
+    if not hasattr(polymer_models, '__iter__'):
+        raise TypeError("polymer_models must be iterable")
+
+    # Convert to lists
+    model_list = list(polymer_models)
+    prob = np.asarray(prob_list, dtype=np.float64)  # (P, K)
+    Ts = np.asarray(T_list, dtype=np.float64)  # (N,)
+    P, K = prob.shape
+    if K != len(model_list):
+        raise ValueError(
+            "prob_list column count must match number of polymer models")
+
+    # Validate probability normalization
+    if not np.allclose(prob.sum(axis=1), 1.0, rtol=1e-3):
+        raise ValueError("Each probability row must sum to 1.")
+    # 1. Collect all M matrices at all temperatures
+    #    mat_list[k] = (N, 3, 3)
+    mats = np.stack([m.temperature_scan(Ts)['Mmat'] for m in model_list],
+                    axis=0)  # (K, N, 3, 3)
+
+    # 2. Weighted combination by prob (vectorized)
+    #    For each probability set p (shape P,K):
+    #    M_avg[p,n,:,:] = sum_k p[p,k] * mats[k,n,:,:]
+    # prob[:, :, None, None] → (P,K,1,1)   broadcast
+    # mats[None, :, :, :, :] → (1,K,N,3,3)
+    M_avg = (prob[:, :, None, None, None] * mats[None]).sum(
+        axis=1)  # (P, N, 3, 3)
+    eigs = np.linalg.eigvals(M_avg)  # (P,N,3)
+    lambda_max = np.max(np.abs(eigs), axis=-1)  # (P,N)
+    lp = np.empty_like(lambda_max)
+
+    mask_bad = lambda_max >= 1.0
+    mask_good = ~mask_bad
+
+    lp[mask_good] = -1.0 / np.log(lambda_max[mask_good])
+    lp[mask_bad] = np.inf
+    lp = lp.T
+    if plot:
+        if P == 1:
+            # 1D plot: persistence vs temperature (single composition)
+            lp_1d = lp[:, 0]
+            finite_mask = np.isfinite(lp_1d)
+            plt.figure()
+            plt.plot(Ts[finite_mask], lp_1d[finite_mask], 'o-')
+            if not np.all(finite_mask):
+                # Optionally mark infinities (e.g., as flat line or annotation)
+                pass
+            plt.xlabel("Temperature (K)")
+            plt.ylabel("Persistence length")
+            plt.title("Persistence Length vs Temperature")
+            plt.grid(True)
+        else:
+            lp_plot = lp.copy()
+            lp_plot[np.isinf(lp_plot)] = np.nan  # Mask inf for display
+            prob_first_component = prob[:, 0]
+
+            im = plt.imshow(lp_plot,
+                            aspect='auto',
+                            origin='lower',
+                            extent=[
+                                prob_first_component.min(),
+                                prob_first_component.max(),
+                                Ts.min(),
+                                Ts.max()
+                            ],
+                            cmap='viridis',
+                            interpolation='bicubic')
+
+            plt.colorbar(im, label="Persistence length")
+
+            X, Y = np.meshgrid(prob_first_component, Ts)
+            finite_vals = lp_plot[np.isfinite(lp_plot)]
+            if len(finite_vals) > 0:
+                CS = plt.contour(X, Y, lp_plot, colors='white', alpha=0.5)
+                plt.clabel(CS, inline=True, fontsize=8, fmt="%.1f")
+
+            plt.ylabel("Temperature (K)")
+            plt.xlabel("Probability of Repeat Unit 1")
+            plt.title("Terpolymer Persistence Length")
+        plt.tight_layout()
+        plt.show()
+    return lp
+
+
+def inverse_data(filename):
+    if isinstance(filename, str):
+        filename = Path(filename)
+    data = np.loadtxt(filename)
+    data_new = np.column_stack((data[:, 0][::-1], data[:, 1]))
+    np.savetxt(filename.stem + "-inv.txt", data_new)
 
 
 # ======================================================================
