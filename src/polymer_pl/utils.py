@@ -164,12 +164,12 @@ class PolymerPersistence:
                 x_values = np.linspace(0, 360, 1000)
                 prob_vals = np.exp(-fitf(x_values) / self.kTval) / norm_val
                 cum_dist = cumulative_trapezoid(prob_vals, x_values, initial=0)
-                _, unique_indices = np.unique(cum_dist, return_index=True)
-                x_values = x_values[unique_indices]
-                cum_dist = cum_dist[unique_indices]
-                prob_vals = prob_vals[unique_indices]
-                inv_cdf = interp1d(cum_dist / cum_dist[-1],
-                                   x_values,
+                norm_cdf = cum_dist / cum_dist[-1]
+                unique_cdf_vals, unique_indices = np.unique(norm_cdf,
+                                                            return_index=True)
+                corresponding_x_vals = x_values[unique_indices]
+                inv_cdf = interp1d(unique_cdf_vals,
+                                   corresponding_x_vals,
                                    kind='cubic',
                                    fill_value="extrapolate")
                 self._full_data[rot_id] = {
@@ -463,15 +463,16 @@ class PolymerPersistence:
     def pre_generate_angles(self, n_samples, flat_rotation):
         """Pre-generate all dihedral angles for Monte Carlo sampling."""
         self._prepare_full_data()
-        length = len(self.bond_lengths)
-        angles_per_position = np.zeros((n_samples, len(flat_rotation)))
+        num_positions = len(flat_rotation)
+        rng = np.random.default_rng()
+        rand_vals = rng.random((n_samples, num_positions))
+        angles_per_position = np.zeros((n_samples, num_positions))
 
         for rot_type, data_type in self._full_data.items():
             mask = flat_rotation == rot_type
             if np.any(mask):
                 inv_cdf = data_type['inv_cdf']
-                rand_vals = np.random.rand(n_samples, mask.sum())
-                angles_per_position[:, mask] = inv_cdf(rand_vals)
+                angles_per_position[:, mask] = inv_cdf(rand_vals[:, mask])
 
         return angles_per_position
 
@@ -759,7 +760,7 @@ def compute_persistence_terpolymer(Mmat, prob):
 def compute_persistence_terpolymer_Tscan(polymer_models,
                                          prob_list,
                                          T_list,
-                                         plot=True):
+                                         plot=True) -> np.ndarray:
     """
     Computes persistence length for a terpolymer across a range of temperatures.
     
@@ -791,6 +792,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
     prob = np.asarray(prob_list, dtype=np.float64)  # (P, K)
     Ts = np.asarray(T_list, dtype=np.float64)  # (N,)
     P, K = prob.shape
+    N = len(Ts)
     if K != len(model_list):
         raise ValueError(
             "prob_list column count must match number of polymer models")
@@ -834,6 +836,18 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.ylabel("Persistence length")
             plt.title("Persistence Length vs Temperature")
             plt.grid(True)
+        elif N == 1:
+            # Fixed T, vary composition → 1D curve: lp vs composition
+            lp_1d = lp[0, :]  # shape (P,)
+            # Use first component probability as x-axis (assuming K >= 1)
+            x = prob[:, 0]  # probability of first monomer
+            finite = np.isfinite(lp_1d)
+            plt.figure()
+            plt.plot(x[finite], lp_1d[finite], 'o-')
+            plt.xlabel("Probability of Repeat Unit 1")
+            plt.ylabel("Persistence length")
+            plt.title(f"Persistence Length vs Composition (T = {Ts[0]:.2f} K)")
+            plt.grid(True)
         else:
             lp_plot = lp.copy()
             lp_plot[np.isinf(lp_plot)] = np.nan  # Mask inf for display
@@ -854,8 +868,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.colorbar(im, label="Persistence length")
 
             X, Y = np.meshgrid(prob_first_component, Ts)
-            finite_vals = lp_plot[np.isfinite(lp_plot)]
-            if len(finite_vals) > 0:
+            if np.any(np.isfinite(lp_plot)):
                 CS = plt.contour(X, Y, lp_plot, colors='white', alpha=0.5)
                 plt.clabel(CS, inline=True, fontsize=8, fmt="%.1f")
 
