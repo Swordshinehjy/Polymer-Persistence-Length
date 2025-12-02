@@ -1,13 +1,14 @@
 from pathlib import Path
-import psutil
-from joblib import Parallel, delayed
 
 import matplotlib.pyplot as plt
 import numpy as np
+import psutil
 import scipy.constants as sc
+from joblib import Parallel, delayed
 from numpy.linalg import eigvals
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
+from scipy.linalg import fractional_matrix_power
 
 # Import the Cython module (after compilation)
 try:
@@ -26,16 +27,7 @@ class PolymerPersistence:
 
     This class encapsulates the calculations for determining the persistence
     length from bond lengths, bond angles, and rotational potentials
-    using the matrix transformation method.
-
-    Attributes:
-        bond_lengths (np.ndarray): Array of bond lengths.
-        bond_angles_rad (np.ndarray): Array of bond angles in radians.
-        rotation_types (np.ndarray): Array defining the type of rotational potential for each bond.
-        temperature (float): The temperature in Kelvin.
-        kTval (float): Boltzmann constant times temperature (in kJ/mol).
-        lambda_max (float): The largest eigenvalue of the transformation matrix.
-        persistence_length_repeats (float): The calculated persistence length in units of repeat units.
+    using the matrix transformation method or the Monte Carlo method.
     """
 
     def __init__(self,
@@ -54,10 +46,13 @@ class PolymerPersistence:
         Args:
             bond_lengths (list or np.ndarray): The lengths of the bonds in the repeat unit.
             bond_angles_deg (list or np.ndarray): The deflection angles between bonds in degrees.
-            rotation_types (list or np.ndarray): An array of integers mapping each bond to a
+            temperature (int, optional): The temperature in Kelvin. Defaults to 300.
+            rotaion_types (list or np.ndarray, optional): An array of integers mapping each bond to a
                                                  specific rotational potential profile. A value of 0
                                                  indicates a fixed bond with no rotation.
-            temperature (int, optional): The temperature in Kelvin. Defaults to 300.
+            rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
+            ris_types (list or np.ndarray, optional): An array of integers mapping each bond to ris model.
+            ris_labels (dict, optional): A dictionary mapping ris_types to data files.
         """
         self.bond_lengths = np.array(bond_lengths)
         self.bond_angles_rad = np.deg2rad(np.array(bond_angles_deg))
@@ -401,6 +396,7 @@ class PolymerPersistence:
                      data['data'][:, 1],
                      f"{data['color']}",
                      marker="o",
+                     linestyle="None",
                      label=data['label'])
             plt.plot(data['x_values'],
                      data['fitf'](data['x_values']),
@@ -460,8 +456,8 @@ class PolymerPersistence:
                                                0]]), segments)),
                          axis=0)
 
-    def pre_generate_angles(self, n_samples, flat_rotation):
-        """Pre-generate all dihedral angles for Monte Carlo sampling."""
+    def pre_generate_angles_independent(self, n_samples, flat_rotation):
+        """Original independent sampling method."""
         self._prepare_full_data()
         num_positions = len(flat_rotation)
         rng = np.random.default_rng()
@@ -476,9 +472,81 @@ class PolymerPersistence:
 
         return angles_per_position
 
+    def pre_generate_angles_stratified(self,
+                                       n_samples,
+                                       flat_rotation,
+                                       n_strata=20):
+        """
+        Stratified sampling to reduce variance.
+        Better for flexible systems with high noise.
+        
+        Args:
+            n_samples: Number of samples to generate
+            flat_rotation: Rotation type array
+            n_strata: Number of strata to divide each angle range
+        """
+        self._prepare_full_data()
+        num_positions = len(flat_rotation)
+        rng = np.random.default_rng()
+
+        angles_per_position = np.zeros((n_samples, num_positions))
+
+        for rot_type, data_type in self._full_data.items():
+            mask = flat_rotation == rot_type
+            if np.any(mask):
+                inv_cdf = data_type['inv_cdf']
+                n_positions = np.sum(mask)
+
+                # Stratified sampling for each position
+                for pos_idx in np.where(mask)[0]:
+                    # Divide [0,1] into n_strata equal parts
+                    samples_per_stratum = n_samples // n_strata
+                    remainder = n_samples % n_strata
+
+                    stratified_samples = []
+                    for stratum in range(n_strata):
+                        lower = stratum / n_strata
+                        upper = (stratum + 1) / n_strata
+                        n_in_stratum = samples_per_stratum + (
+                            1 if stratum < remainder else 0)
+
+                        # Sample uniformly within this stratum
+                        uniform_samples = rng.random(n_in_stratum) * (
+                            upper - lower) + lower
+                        stratified_samples.extend(uniform_samples)
+
+                    angles_per_position[:, pos_idx] = inv_cdf(
+                        np.array(stratified_samples))
+
+        return angles_per_position
+
+    def pre_generate_angles(self,
+                            n_samples,
+                            flat_rotation,
+                            method='independent',
+                            **kwargs):
+        """
+        Generate dihedral angles using the specified sampling method.
+        
+        Args:
+            n_samples: Number of samples to generate
+            flat_rotation: Rotation type array
+            **kwargs: Additional parameters for specific sampling methods
+        """
+        if method == 'independent':
+            return self.pre_generate_angles_independent(
+                n_samples, flat_rotation)
+        elif method == 'stratified':
+            return self.pre_generate_angles_stratified(n_samples,
+                                                       flat_rotation, **kwargs)
+        else:
+            raise ValueError(f"Unknown sampling method: {method}")
+
     def calculate_persistence_length_mc(self,
                                         n_repeat_units=20,
-                                        n_samples=150000):
+                                        n_samples=150000,
+                                        method='independent',
+                                        **sampling_kwargs):
         """
         Calculate persistence length using Monte Carlo sampling.
         
@@ -488,7 +556,11 @@ class PolymerPersistence:
             Number of repeat units in the polymer chain. Default is 20.
         n_samples : int, optional
             Number of Monte Carlo samples to generate. Default is 150,000.
-            
+        method: str, Sampling method to use. Options:
+            - 'independent': Original independent sampling (fast, noisy)
+            - 'stratified': Stratified sampling (reduces noise in flexible systems)
+        **sampling_kwargs : dict
+            Additional parameters for sampling method (e.g., burnin, thin for MCMC)
         Returns:
         --------
         float
@@ -510,7 +582,11 @@ class PolymerPersistence:
         ])[:-1].astype(np.int64)
 
         # Pre-generate all angles
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+        print(f"Using sampling method: {self.sampling_method}")
+        all_angles = self.pre_generate_angles(n_samples,
+                                              flat_rotation,
+                                              method=method,
+                                              **sampling_kwargs)
 
         print(f"Calculating {n_samples} samples...")
         print(f"Using {psutil.cpu_count(logical=False)} CPU cores")
@@ -559,7 +635,10 @@ class PolymerPersistence:
                                   n_repeat_units=20,
                                   n_samples=150000,
                                   start_idx=1,
-                                  end_idx=10):
+                                  end_idx=10,
+                                  method='independent',
+                                  return_data=False,
+                                  **sampling_kwargs):
         """
         Plot the correlation function and its exponential fit.
         
@@ -573,6 +652,11 @@ class PolymerPersistence:
             Starting index for fitting. Default is 1.
         end_idx : int, optional
             Ending index for fitting. Default is 10.
+        method: str, Sampling method to use. Options:
+            - 'independent': Original independent sampling (fast, noisy)
+            - 'stratified': Stratified sampling (reduces noise in flexible systems)
+        **sampling_kwargs : dict
+            Additional parameters for sampling method (e.g., burnin, thin for MCMC)
         """
         try:
             if chain_rotation is None:
@@ -591,7 +675,10 @@ class PolymerPersistence:
             ])[:-1].astype(np.int64)
 
             # Pre-generate all angles
-            all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+            all_angles = self.pre_generate_angles(n_samples,
+                                                  flat_rotation,
+                                                  method=method,
+                                                  **sampling_kwargs)
 
             # Parallel computation using Cython optimized version
             batch_size = 1000
@@ -663,12 +750,14 @@ class PolymerPersistence:
                       fontfamily="Helvetica")
             plt.tight_layout()
             plt.show()
+            if return_data:
+                return corr2
 
         except Exception as e:
             print(f"Error in plot_correlation_function: {str(e)}")
             return
 
-    def temperature_scan(self, T_list):
+    def temperature_scan(self, T_list, plot=False):
         """
         T_list: iterable of temperatures (K)
         Returns: dict with keys 'T', 'lp', 'Mmat'
@@ -700,7 +789,15 @@ class PolymerPersistence:
             else:
                 lp = -1.0 / np.log(lambda_max)
             results['lp'].append(lp)
-
+        if plot:
+            plt.figure(figsize=(8, 6))
+            plt.plot(Ts, results['lp'], 'o-')
+            plt.title('Temperature Scan')
+            plt.xlabel('Temperature (K)')
+            plt.ylabel('Persistence Length (repeat units)')
+            plt.grid(True)
+            plt.tight_layout()
+            plt.show()
         # restore original
         self.temperature = float(self.temperature)
         self.kTval = kT_orig
@@ -823,11 +920,18 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
     lp[mask_bad] = np.inf
     lp = lp.T
     if plot:
-        if P == 1:
+        if P == 1 and N == 1:
+            # report
+            print("---- Persistence Length Calculation Report ----")
+            print(f"Temperature: {Ts[0]:.2f} K")
+            print(f"Max Eigenvalue (lambda_max): {lambda_max[0, 0]:.12f}")
+            print(f"Persistence Length (in repeat units): {lp[0, 0]:.6f}")
+            print("-----------------------------------------------")
+        elif P == 1:
             # 1D plot: persistence vs temperature (single composition)
             lp_1d = lp[:, 0]
             finite_mask = np.isfinite(lp_1d)
-            plt.figure()
+            plt.figure(figsize=(8, 6))
             plt.plot(Ts[finite_mask], lp_1d[finite_mask], 'o-')
             if not np.all(finite_mask):
                 # Optionally mark infinities (e.g., as flat line or annotation)
@@ -836,23 +940,27 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.ylabel("Persistence length")
             plt.title("Persistence Length vs Temperature")
             plt.grid(True)
+            plt.tight_layout()
+            plt.show()
         elif N == 1:
             # Fixed T, vary composition → 1D curve: lp vs composition
             lp_1d = lp[0, :]  # shape (P,)
             # Use first component probability as x-axis (assuming K >= 1)
             x = prob[:, 0]  # probability of first monomer
             finite = np.isfinite(lp_1d)
-            plt.figure()
+            plt.figure(figsize=(8, 6))
             plt.plot(x[finite], lp_1d[finite], 'o-')
             plt.xlabel("Probability of Repeat Unit 1")
             plt.ylabel("Persistence length")
             plt.title(f"Persistence Length vs Composition (T = {Ts[0]:.2f} K)")
             plt.grid(True)
+            plt.tight_layout()
+            plt.show()
         else:
             lp_plot = lp.copy()
             lp_plot[np.isinf(lp_plot)] = np.nan  # Mask inf for display
             prob_first_component = prob[:, 0]
-
+            plt.figure(figsize=(8, 6))
             im = plt.imshow(lp_plot,
                             aspect='auto',
                             origin='lower',
@@ -875,8 +983,8 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.ylabel("Temperature (K)")
             plt.xlabel("Probability of Repeat Unit 1")
             plt.title("Terpolymer Persistence Length")
-        plt.tight_layout()
-        plt.show()
+            plt.tight_layout()
+            plt.show()
     return lp
 
 
@@ -886,6 +994,92 @@ def inverse_data(filename):
     data = np.loadtxt(filename)
     data_new = np.column_stack((data[:, 0][::-1], data[:, 1]))
     np.savetxt(filename.stem + "-inv.txt", data_new)
+
+
+def compute_persistence_alternating(model1, model2, temperature, plot=True):
+    """
+    Compute persistence length for alternating matrices.
+    
+    Parameters:
+    -----------
+    model1 : PolymerPersistence
+        First model
+    model2 : PolymerPersistence
+        Second model
+    tempeture : float or list
+    plot : bool, optional
+    Returns:
+    --------
+    tuple
+        (persistence length, maximum eigenvalue)
+    """
+    # Normalize input temperature to array
+    is_scalar = np.isscalar(temperature) or (hasattr(temperature, '__len__')
+                                             and len(temperature) == 1)
+    T_arr = np.atleast_1d(temperature).astype(np.float64)
+    N = len(T_arr)
+    # Run temperature scans for both models
+    res1 = model1.temperature_scan(T_arr)
+    res2 = model2.temperature_scan(T_arr)
+    M1_all = np.array(res1["Mmat"])  # shape (N, 3, 3)
+    M2_all = np.array(res2["Mmat"])  # shape (N, 3, 3)
+    M_combined = np.einsum("nij,njk->nik", M1_all, M2_all)  # (N,3,3)
+    # Compute fractional matrix power: (M_B @ M_A)^{1/2}
+    M_avg = np.zeros_like(M_combined)
+    for i in range(N):
+        try:
+            M_avg[i] = fractional_matrix_power(M_combined[i], 0.5)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to compute matrix square root at T={T_arr[i]} K: {e}")
+    # Compute eigenvalues and lambda_max
+    eigs = np.linalg.eigvals(M_avg)  # (N, 3)
+    lambda_max = np.max(np.abs(eigs), axis=-1)  # (N,)
+
+    lp = np.empty_like(lambda_max)
+    mask_good = lambda_max < 1.0
+    mask_bad = ~mask_good
+
+    lp[mask_good] = -1.0 / np.log(lambda_max[mask_good])
+    lp[mask_bad] = np.inf
+
+    if is_scalar:
+        T_val = float(T_arr[0])
+        lp_val = lp[0]
+        lambda_val = lambda_max[0]
+        print("---- Alternating Copolymer Persistence Length Report ----")
+        print(f"Temperature: {T_val:.2f} K")
+        print(f"Max Eigenvalue (λ_max): {lambda_val:.12f}")
+        if np.isinf(lp_val):
+            print("Persistence Length: ∞ (rigid or semi-flexible limit)")
+        else:
+            print(f"Persistence Length (in repeat units): {lp_val:.6f}")
+        print("---------------------------------------------------------")
+
+        return lp_val
+    else:
+        if plot:
+            plt.figure(figsize=(8, 6))
+            finite_mask = np.isfinite(lp)
+            if np.any(finite_mask):
+                plt.plot(T_arr[finite_mask],
+                         lp[finite_mask],
+                         'o-',
+                         color='tab:blue')
+            if np.any(~finite_mask):
+                pass
+            plt.xlabel("Temperature (K)", fontsize=14, fontfamily="Helvetica")
+            plt.ylabel("Persistence Length (repeat units)",
+                       fontsize=14,
+                       fontfamily="Helvetica")
+            plt.title(
+                "Alternating Copolymer Persistence Length vs. Temperature",
+                fontsize=16)
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.show()
+
+        return lp
 
 
 # ======================================================================

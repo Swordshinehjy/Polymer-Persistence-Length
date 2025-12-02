@@ -106,29 +106,28 @@ def randomRotate_cython(const double[:, :] base_pts, const double[:] angles, con
 def cosVals_cython(const double[:, :] pts, int length):
     """Cythonized version of cosVals."""
     cdef int n_pts = pts.shape[0]
-    cdef int n_values = (n_pts - 2) // length
+    cdef int n_values = (n_pts - length) // length
     cdef cnp.ndarray[double, ndim=1] cos_vals = np.empty(n_values, dtype=np.float64)
     cdef double[:] cos_view = cos_vals
 
     cdef double[:] v2 = np.empty(3, dtype=np.float64)
-    cdef double norm_v2, dot_prod, norm_v, comp, cos_val
+    cdef double dot_prod, norm_v, comp, cos_val
     cdef int i, k, j
 
     # First vector (reference)
-    k = 2
-    v2[0] = pts[k, 0] - pts[k - 1, 0]
-    v2[1] = pts[k, 1] - pts[k - 1, 1]
-    v2[2] = pts[k, 2] - pts[k - 1, 2]
-    norm_v2 = sqrt(v2[0]*v2[0] + v2[1]*v2[1] + v2[2]*v2[2])
+    v2[0] = pts[length, 0] - pts[0, 0]
+    v2[1] = pts[length, 1] - pts[0, 1]
+    v2[2] = pts[length, 2] - pts[0, 2]
+    cdef double norm_v2 = sqrt(v2[0]*v2[0] + v2[1]*v2[1] + v2[2]*v2[2])
 
     for i in range(n_values):
-        k = 2 + i * length
+        k = (i + 1) * length
 
         # Current vector
         dot_prod = 0.0
         norm_v = 0.0
         for j in range(3):
-            comp = pts[k, j] - pts[k - 1, j]
+            comp = pts[k, j] - pts[k - length, j]
             dot_prod += comp * v2[j]
             norm_v += comp * comp
 
