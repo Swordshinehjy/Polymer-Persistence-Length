@@ -18,10 +18,13 @@ cdef void rotation_matrix_fast(const double[:] axis, double angle, double[:, :] 
     cdef double ay = axis[1] / norm
     cdef double az = axis[2] / norm
 
+    cdef double half_angle = angle / 2.0
+    cdef double sin_half = sin(half_angle)
+
     cdef double a = cos(angle / 2.0)
-    cdef double b = -ax * sin(angle / 2.0)
-    cdef double c = -ay * sin(angle / 2.0)
-    cdef double d = -az * sin(angle / 2.0)
+    cdef double b = -ax * sin_half
+    cdef double c = -ay * sin_half
+    cdef double d = -az * sin_half
 
     cdef double aa = a * a
     cdef double bb = b * b

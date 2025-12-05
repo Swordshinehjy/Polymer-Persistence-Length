@@ -54,7 +54,8 @@ class PolymerPersistence:
             ris_types (list or np.ndarray, optional): An array of integers mapping each bond to ris model.
             ris_labels (dict, optional): A dictionary mapping ris_types to data files.
         """
-        self.bond_lengths = np.array(bond_lengths)
+        self.bond_lengths = None if bond_lengths is None else np.array(
+            bond_lengths)
         self.bond_angles_rad = np.deg2rad(np.array(bond_angles_deg))
         self.rotation_types = np.array(rotation_types)
         self.temperature = temperature
@@ -85,20 +86,21 @@ class PolymerPersistence:
         """Reads and processes dihedral angle data from a file."""
         data = np.loadtxt(file_name)
         data = np.reshape(data, (-1, 2))
-        if data[:, 0].max() - data[:, 0].min() != 360:
-            # symmetric, only calculate half of the dihedral potential
-            if data[:, 0].min() == 0 or data[:, 0].min(
-            ) == 180:  # from 0 to 180 or 180 to 360
-                mirrored = np.column_stack((-data[:, 0] + 360, data[:, 1]))
-                combined = np.vstack((data, mirrored))
-            elif data[:, 0].min() == -180:  # from -180 to 0
-                mirrored = np.column_stack((-data[:, 0], data[:, 1]))
-                combined = np.vstack((np.column_stack(
-                    (mirrored, data[:, 0] + 360, data[:, 1]))))
-            combined = np.unique(combined, axis=0)
-            return combined[np.argsort(combined[:, 0])]
-        else:  # full dihedral potential
-            return data[np.argsort(data[:, 0])]
+        if data[:, 0].max() == 360 and data[:, 0].min() == 0:
+            return data
+        else:
+            all_angles = np.concatenate(
+                ((data[:, 0] + 360) % 360, (-data[:, 0] + 360) % 360))
+            all_energies = np.concatenate((data[:, 1], data[:, 1]))
+            combined = np.column_stack((all_angles, all_energies))
+            _, index = np.unique(combined[:, 0], axis=0, return_index=True)
+            combined = combined[index]
+            zero_mask = np.isclose(combined[:, 0], 0.0, atol=1e-8)
+            if np.any(zero_mask):
+                energy0 = combined[zero_mask, 1][0]
+                combined = np.vstack((combined, [360.0, energy0]))
+                combined = combined[np.argsort(combined[:, 0])]
+            return combined
 
     @staticmethod
     def _read_ris_data(file_name):
@@ -283,13 +285,13 @@ class PolymerPersistence:
                 m_i, s_i = 1.0, 0.0
 
             # Dihedral rotation matrix (around x-axis)
-            S = np.array([[1, 0.0, 0.0], [0.0, m_i, -s_i], [0.0, s_i, m_i]])
+            R_x = np.array([[1, 0.0, 0.0], [0.0, m_i, -s_i], [0.0, s_i, m_i]])
 
             # Bond angle deflection matrix (around z-axis)
             c, s = np.cos(theta), np.sin(theta)
             R_z = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1]])
 
-            A_list.append(S @ R_z)
+            A_list.append(R_x @ R_z)
 
         # Multiply all transformation matrices for the repeat unit
         Mmat = np.eye(3)
@@ -336,6 +338,8 @@ class PolymerPersistence:
 
     def compute_mean_square_end_to_end(self, N):
         """Computes the mean square end-to-end distance for a given number of repeat units."""
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
         if self._lp_in_repeats is None:
             self.run_calculation()
         L_repeat = np.sum(self.bond_lengths)
@@ -347,7 +351,25 @@ class PolymerPersistence:
                 1 - self._lp_in_repeats / N *
                 (1 - np.exp(-N / self._lp_in_repeats)))
 
-    def plot_end_to_end_distance(self, N):
+    def compute_mean_square_Rg(self, N):
+        """Computes the mean square radius of gyration for a given number of repeat units."""
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        if self._lp_in_repeats is None:
+            self.run_calculation()
+        L_repeat = np.sum(self.bond_lengths)
+        if self._lp_in_repeats == np.inf:
+            raise RuntimeError(
+                "Infinite persistence length not supported for Rg calculation."
+            )
+        else:
+            L_square = L_repeat**2
+            Np = self._lp_in_repeats
+            rg2 = L_square * (Np * N / 3 - Np**2 + 2 * Np**3 / N -
+                              2 * Np**4 / N**2 * (1 - np.exp(-N / Np)))
+            return rg2
+
+    def plot_end_to_end_distance(self, N=20):
         """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
 
         Args:
@@ -360,7 +382,7 @@ class PolymerPersistence:
         msd_values = [self.compute_mean_square_end_to_end(n) for n in N_values]
 
         # Create the plot
-        plt.figure(figsize=(8, 6))
+        plt.figure(figsize=(6, 5))
         plt.plot(N_values, msd_values, linewidth=2, color='blue', marker='o')
 
         # Format the plot
@@ -368,6 +390,24 @@ class PolymerPersistence:
                             "Mean Square End-to-End Distance (Å²)",
                             "End-to-End Distance vs. Number of Repeat Units")
 
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
+    def plot_mean_square_radius_of_gyration(self, N=20):
+        """Plots the mean square radius of gyration as a function of repeat units from 1 to N.
+
+        Args:
+            N (int): Maximum number of repeat units to plot
+        """
+        N_values = np.arange(1, N + 1)
+        msd_values = [self.compute_mean_square_Rg(n) for n in N_values]
+        plt.figure(figsize=(6, 5))
+        plt.plot(N_values, msd_values, linewidth=2, color='blue', marker='o')
+
+        self.format_subplot(
+            "Number of Repeat Units (N)", "<Rg²> (Å²)",
+            "Mean Square Radius of Gyration vs. Number of Repeat Units")
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.show()
@@ -381,7 +421,7 @@ class PolymerPersistence:
         # Add legend only if there are labeled elements
         if plt.gca().get_legend_handles_labels()[0]:
             plt.legend(fontsize=14, prop={'family': 'Helvetica'})
-        plt.grid(True)
+        plt.grid(True, alpha=0.3)
         plt.minorticks_on()
         plt.title(title, fontsize=18, fontfamily="Helvetica")
 
@@ -440,7 +480,9 @@ class PolymerPersistence:
 
     def generate_chain(self, n_repeat_units):
         """Generate a polymer chain with n_repeat_units."""
-        l_array = np.tile(self.bond_lengths, n_repeat_units)
+        bonds = self.bond_lengths if self.bond_lengths is not None else np.array(
+            [1.0] * len(self.bond_angles_rad))
+        l_array = np.tile(bonds, n_repeat_units)
         all_l = np.vstack((l_array, np.zeros((2, l_array.shape[0])))).T
         all_angle = np.tile(self.bond_angles_rad, n_repeat_units)
         angles = np.cumsum(all_angle[1:])
@@ -451,9 +493,8 @@ class PolymerPersistence:
         rotated_y = vectors[:, 0] * sin_angles + vectors[:, 1] * cos_angles
         rotated_z = vectors[:, 2]
         segments = np.column_stack((rotated_x, rotated_y, rotated_z))
-        return np.cumsum(np.vstack((np.array([[0, 0, 0],
-                                              [self.bond_lengths[0], 0,
-                                               0]]), segments)),
+        return np.cumsum(np.vstack((np.array([[0, 0, 0], [bonds[0], 0,
+                                                          0]]), segments)),
                          axis=0)
 
     def pre_generate_angles_independent(self, n_samples, flat_rotation):
@@ -574,7 +615,7 @@ class PolymerPersistence:
 
         # Generate the base chain
         ch = self.generate_chain(n_repeat_units)
-        length = len(self.bond_lengths)
+        length = len(self.bond_angles_rad)
 
         # Prepare rotation mapping for the chain
         flat_rotation = np.concatenate([
@@ -582,7 +623,6 @@ class PolymerPersistence:
         ])[:-1].astype(np.int64)
 
         # Pre-generate all angles
-        print(f"Using sampling method: {self.sampling_method}")
         all_angles = self.pre_generate_angles(n_samples,
                                               flat_rotation,
                                               method=method,
@@ -591,7 +631,7 @@ class PolymerPersistence:
         print(f"Calculating {n_samples} samples...")
         print(f"Using {psutil.cpu_count(logical=False)} CPU cores")
 
-        # Parallel computation using Cython optimized version
+        # Parallel computation using Cython optimized versionable_memory * 0.5 / sampl
         batch_size = 1000
         n_batches = n_samples // batch_size
         n_jobs = psutil.cpu_count(logical=False)
@@ -667,7 +707,7 @@ class PolymerPersistence:
 
             # Generate the base chain
             ch = self.generate_chain(n_repeat_units)
-            length = len(self.bond_lengths)
+            length = len(self.bond_angles_rad)
 
             # Prepare rotation mapping for the chain
             flat_rotation = np.concatenate([
@@ -722,11 +762,10 @@ class PolymerPersistence:
                 persistence_length = -1 / p[1]
 
             # Plotting
-            plt.figure(figsize=(10, 6))
+            plt.figure(figsize=(6, 5))
             plt.plot(repeat_units[start_idx:end_idx],
                      np.log(corr2[start_idx:end_idx]),
                      'bo',
-                     markersize=8,
                      label='Log Correlation')
             plt.plot(repeat_units[start_idx:end_idx],
                      np.polynomial.polynomial.polyval(
@@ -735,20 +774,8 @@ class PolymerPersistence:
                      linewidth=2,
                      alpha=0.7,
                      label=f'Np = {persistence_length:.5f}')
-            plt.xlabel("Repeat Units", fontsize=16, fontfamily="Helvetica")
-            plt.ylabel(r'Ln[$<V_0 \cdot V_n>$]',
-                       fontsize=16,
-                       fontfamily="Helvetica")
-            plt.xticks(fontsize=14, fontfamily="Helvetica")
-            plt.yticks(fontsize=14, fontfamily="Helvetica")
-            plt.grid(True, alpha=0.3)
-            # Add legend only if there are labeled elements
-            if plt.gca().get_legend_handles_labels()[0]:
-                plt.legend(fontsize=14, prop={'family': 'Helvetica'})
-            plt.title("Log of Correlation Function",
-                      fontsize=18,
-                      fontfamily="Helvetica")
-            plt.tight_layout()
+            self.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
+                                "Log of Correlation Function")
             plt.show()
             if return_data:
                 return corr2
@@ -790,13 +817,11 @@ class PolymerPersistence:
                 lp = -1.0 / np.log(lambda_max)
             results['lp'].append(lp)
         if plot:
-            plt.figure(figsize=(8, 6))
+            plt.figure(figsize=(6, 5))
             plt.plot(Ts, results['lp'], 'o-')
-            plt.title('Temperature Scan')
-            plt.xlabel('Temperature (K)')
-            plt.ylabel('Persistence Length (repeat units)')
-            plt.grid(True)
-            plt.tight_layout()
+            self.format_subplot("Temperature (K)",
+                                "Persistence Length (repeat units)",
+                                "Temperature Scan")
             plt.show()
         # restore original
         self.temperature = float(self.temperature)
@@ -931,7 +956,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             # 1D plot: persistence vs temperature (single composition)
             lp_1d = lp[:, 0]
             finite_mask = np.isfinite(lp_1d)
-            plt.figure(figsize=(8, 6))
+            plt.figure(figsize=(6, 5))
             plt.plot(Ts[finite_mask], lp_1d[finite_mask], 'o-')
             if not np.all(finite_mask):
                 # Optionally mark infinities (e.g., as flat line or annotation)
@@ -948,7 +973,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             # Use first component probability as x-axis (assuming K >= 1)
             x = prob[:, 0]  # probability of first monomer
             finite = np.isfinite(lp_1d)
-            plt.figure(figsize=(8, 6))
+            plt.figure(figsize=(6, 5))
             plt.plot(x[finite], lp_1d[finite], 'o-')
             plt.xlabel("Probability of Repeat Unit 1")
             plt.ylabel("Persistence length")
@@ -960,7 +985,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             lp_plot = lp.copy()
             lp_plot[np.isinf(lp_plot)] = np.nan  # Mask inf for display
             prob_first_component = prob[:, 0]
-            plt.figure(figsize=(8, 6))
+            plt.figure(figsize=(6, 5))
             im = plt.imshow(lp_plot,
                             aspect='auto',
                             origin='lower',
@@ -979,10 +1004,13 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             if np.any(np.isfinite(lp_plot)):
                 CS = plt.contour(X, Y, lp_plot, colors='white', alpha=0.5)
                 plt.clabel(CS, inline=True, fontsize=8, fmt="%.1f")
-
-            plt.ylabel("Temperature (K)")
-            plt.xlabel("Probability of Repeat Unit 1")
-            plt.title("Terpolymer Persistence Length")
+            plt.ylabel("Temperature (K)", fontsize=16, fontfamily="Helvetica")
+            plt.xlabel("Probability of Repeat Unit 1",
+                       fontsize=16,
+                       fontfamily="Helvetica")
+            plt.title("Terpolymer Persistence Length",
+                      fontsize=18,
+                      fontfamily="Helvetica")
             plt.tight_layout()
             plt.show()
     return lp
@@ -992,6 +1020,7 @@ def inverse_data(filename):
     if isinstance(filename, str):
         filename = Path(filename)
     data = np.loadtxt(filename)
+    data = data[np.argsort(data[:, 0])]
     data_new = np.column_stack((data[:, 0][::-1], data[:, 1]))
     np.savetxt(filename.stem + "-inv.txt", data_new)
 
@@ -1059,7 +1088,7 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
         return lp_val
     else:
         if plot:
-            plt.figure(figsize=(8, 6))
+            plt.figure(figsize=(6, 5))
             finite_mask = np.isfinite(lp)
             if np.any(finite_mask):
                 plt.plot(T_arr[finite_mask],
@@ -1074,7 +1103,8 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
                        fontfamily="Helvetica")
             plt.title(
                 "Alternating Copolymer Persistence Length vs. Temperature",
-                fontsize=16)
+                fontsize=18,
+                fontfamily="Helvetica")
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
             plt.show()
