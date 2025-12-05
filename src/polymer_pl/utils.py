@@ -961,11 +961,16 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             if not np.all(finite_mask):
                 # Optionally mark infinities (e.g., as flat line or annotation)
                 pass
-            plt.xlabel("Temperature (K)")
-            plt.ylabel("Persistence length")
-            plt.title("Persistence Length vs Temperature")
+            plt.xlabel("Temperature (K)", fontsize=16, fontfamily="Helvetica")
+            plt.ylabel("$N_p$", fontsize=16, fontfamily="Helvetica")
+            plt.title("Persistence Length vs Temperature",
+                      fontsize=18,
+                      fontfamily="Helvetica")
+            plt.xticks(fontsize=14, fontfamily="Helvetica")
+            plt.yticks(fontsize=14, fontfamily="Helvetica")
             plt.grid(True)
             plt.tight_layout()
+            plt.minorticks_on()
             plt.show()
         elif N == 1:
             # Fixed T, vary composition → 1D curve: lp vs composition
@@ -975,11 +980,18 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             finite = np.isfinite(lp_1d)
             plt.figure(figsize=(6, 5))
             plt.plot(x[finite], lp_1d[finite], 'o-')
-            plt.xlabel("Probability of Repeat Unit 1")
-            plt.ylabel("Persistence length")
-            plt.title(f"Persistence Length vs Composition (T = {Ts[0]:.2f} K)")
+            plt.xlabel("Probability of Repeat Unit 1",
+                       fontsize=16,
+                       fontfamily="Helvetica")
+            plt.ylabel("$N_p$", fontsize=16, fontfamily="Helvetica")
+            plt.title(f"$N_p$ vs Composition (T = {Ts[0]:.2f} K)",
+                      fontsize=18,
+                      fontfamily="Helvetica")
+            plt.xticks(fontsize=14, fontfamily="Helvetica")
+            plt.yticks(fontsize=14, fontfamily="Helvetica")
             plt.grid(True)
             plt.tight_layout()
+            plt.minorticks_on()
             plt.show()
         else:
             lp_plot = lp.copy()
@@ -998,7 +1010,10 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
                             cmap='viridis',
                             interpolation='bicubic')
 
-            plt.colorbar(im, label="Persistence length")
+            cbar = plt.colorbar(im)
+            cbar.set_label("Persistence length", fontsize=14, fontfamily="Helvetica")
+            cbar.ax.tick_params(labelsize=14)
+            plt.setp(cbar.ax.get_yticklabels(), fontfamily="Helvetica")
 
             X, Y = np.meshgrid(prob_first_component, Ts)
             if np.any(np.isfinite(lp_plot)):
@@ -1011,6 +1026,9 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.title("Terpolymer Persistence Length",
                       fontsize=18,
                       fontfamily="Helvetica")
+            plt.xticks(fontsize=14, fontfamily="Helvetica")
+            plt.yticks(fontsize=14, fontfamily="Helvetica")
+            plt.minorticks_on()
             plt.tight_layout()
             plt.show()
     return lp
@@ -1098,14 +1116,14 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
             if np.any(~finite_mask):
                 pass
             plt.xlabel("Temperature (K)", fontsize=14, fontfamily="Helvetica")
-            plt.ylabel("Persistence Length (repeat units)",
-                       fontsize=14,
-                       fontfamily="Helvetica")
-            plt.title(
-                "Alternating Copolymer Persistence Length vs. Temperature",
-                fontsize=18,
-                fontfamily="Helvetica")
+            plt.ylabel("$N_p$", fontsize=14, fontfamily="Helvetica")
+            plt.title("Alternating Copolymer $N_p$ vs. Temperature",
+                      fontsize=18,
+                      fontfamily="Helvetica")
+            plt.xticks(fontsize=14, fontfamily="Helvetica")
+            plt.yticks(fontsize=14, fontfamily="Helvetica")
             plt.grid(True, alpha=0.3)
+            plt.minorticks_on()
             plt.tight_layout()
             plt.show()
 
