@@ -506,22 +506,20 @@ class PolymerPersistenceDependentDefelection:
         Returns: dict with keys 'T', 'lp', 'Mmat'
         """
         Ts = np.asarray(T_list, dtype=np.float64)
-        results = {'T': Ts, 'lp': [], 'Mmat': []}
+        results = {'T': Ts, 'lp': [], 'Mmat': [], 'average_angles': []}
 
-        # store original kTval
         kT_orig = self.kTval
         for T in Ts:
-            self.temperature = float(T)
-            self.kTval = sc.R * self.temperature / 1000.0  # kJ/mol
+            self.kTval = sc.R * T / 1000.0  # kJ/mol
             # clear cached integrals because they depend on kT
             # simplest approach: reset computational caches that depend on kT
             self._computational_data = {}
-            self._full_data = {}
 
             # recompute M matrix (vectorized)
             try:
                 self._calculate_Mmat()
                 results['Mmat'].append(self._Mmat)
+                results['average_angles'].append(self._avg_angles)
             except Exception:
                 raise ValueError("Failed to compute M matrix")
             # find lambda_max and lp
@@ -540,7 +538,6 @@ class PolymerPersistenceDependentDefelection:
                                 "Temperature Scan")
             plt.show()
         # restore original
-        self.temperature = float(self.temperature)
         self.kTval = kT_orig
         self._calculate_Mmat()
         return results

@@ -827,11 +827,9 @@ class PolymerPersistence:
         Ts = np.asarray(T_list, dtype=np.float64)
         results = {'T': Ts, 'lp': [], 'Mmat': []}
 
-        # store original kTval
         kT_orig = self.kTval
         for T in Ts:
-            self.temperature = float(T)
-            self.kTval = sc.R * self.temperature / 1000.0  # kJ/mol
+            self.kTval = sc.R * T / 1000.0  # kJ/mol
             # clear cached integrals because they depend on kT
             # simplest approach: reset computational caches that depend on kT
             self._computational_data = {}
@@ -859,7 +857,6 @@ class PolymerPersistence:
                                 "Temperature Scan")
             plt.show()
         # restore original
-        self.temperature = float(self.temperature)
         self.kTval = kT_orig
         self._calculate_Mmat()
         return results

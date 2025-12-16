@@ -813,14 +813,11 @@ class PolymerPersistenceDependentDihedral:
         Ts = np.asarray(T_list, dtype=np.float64)
         results = {'T': Ts, 'lp': [], 'Mmat': []}
 
-        # store original kTval
-        t_orig = self.temperature
         kT_orig = self.kTval
         vectorized_orig = self.vectorized
         self.vectorized = True
         for T in Ts:
-            self.temperature = float(T)
-            self.kTval = sc.R * self.temperature / 1000.0  # kJ/mol
+            self.kTval = sc.R * T / 1000.0  # kJ/mol
             self._computational_data = {}
             self._full_data = {}
 
@@ -846,7 +843,6 @@ class PolymerPersistenceDependentDihedral:
                                 "Temperature Scan")
             plt.show()
         # restore original
-        self.temperature = t_orig
         self.kTval = kT_orig
         self.vectorized = vectorized_orig
         self._calculate_Mmat()
