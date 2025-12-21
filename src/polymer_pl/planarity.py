@@ -1,10 +1,11 @@
 from pathlib import Path
-import numpy as np
+
 import matplotlib.pyplot as plt
+import numpy as np
+import scipy.constants as sc
 from numpy.linalg import eigvals
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
-import scipy.constants as sc
 
 
 class PolymerPlanarity:

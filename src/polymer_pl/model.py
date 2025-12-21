@@ -90,10 +90,11 @@ class PolymerPersistence:
         data = np.reshape(data, (-1, 2))
         data = np.unique(data, axis=0)
         return data[:, 0], data[:, 1]
-    
+
     @staticmethod
     def _update_dihedral(data):
         data = np.asarray(data)
+        data[:, 1] -= data[:, 1].min()
         if data[:, 0].max() == 360 and data[:, 0].min() == 0:
             return data
         else:
@@ -352,7 +353,7 @@ class PolymerPersistence:
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
         return self.persistence_length_repeats * np.sum(self.bond_lengths)
-    
+
     @property
     def kuhn_length(self):
         """The Kuhn length."""
@@ -706,6 +707,54 @@ class PolymerPersistence:
             np.ascontiguousarray(all_angles, dtype=np.float64),
             np.ascontiguousarray(flat_rotation, dtype=np.int64), length)
 
+    def calculate_contact_map_mc(
+        self,
+        n_repeat_units=20,
+        n_samples=20000,
+    ):
+        ch = self.generate_chain(n_repeat_units)
+        length = len(self.bond_angles_rad)
+
+        flat_rotation = np.concatenate([
+            [0], self.rotation_types[np.arange(len(ch) - 1) % length]
+        ])[:-1].astype(np.int64)
+
+        all_angles = self.pre_generate_angles(n_samples,
+                                              flat_rotation,
+                                              method="independent")
+        c = np.zeros((n_repeat_units, n_repeat_units))
+        unit_idx = np.arange(0, n_repeat_units * length + 1, length)
+        for i in range(n_samples):
+            pos = chain_rotation.randomRotate_cython(ch, all_angles[i],
+                                                     flat_rotation)
+            r = pos[unit_idx]
+            u = r[1:] - r[:-1]
+            u /= np.linalg.norm(u, axis=1, keepdims=True)
+            c[:len(u), :len(u)] += u @ u.T
+        return c / n_samples
+
+    def plot_contact_map_mc(self, n_units=20, n_samples=100):
+        plt.figure(figsize=(6, 5))
+        im = plt.imshow(self.calculate_contact_map_mc(n_units, n_samples),
+                        vmin=-1,
+                        vmax=1,
+                        cmap="coolwarm",
+                        interpolation="bicubic")
+        plt.xlabel("i", fontsize=14, fontfamily="Helvetica")
+        plt.ylabel("j", fontsize=14, fontfamily="Helvetica")
+        plt.xticks(fontsize=14, fontfamily="Helvetica")
+        plt.yticks(fontsize=14, fontfamily="Helvetica")
+        plt.title("Contact Map", fontsize=16, fontfamily="Helvetica")
+        cbar = plt.colorbar(im)
+        cbar.set_label(r"$\hat v_i \cdot \hat v_j$",
+                       fontsize=14,
+                       fontfamily="Helvetica")
+        cbar.ax.tick_params(labelsize=14)
+        plt.setp(cbar.ax.get_yticklabels(), fontfamily="Helvetica")
+        plt.minorticks_on()
+        plt.tight_layout()
+        plt.show()
+
     def plot_correlation_function(self,
                                   n_repeat_units=20,
                                   n_samples=150000,
@@ -944,7 +993,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
     # Convert to lists
     model_list = list(polymer_models)
     prob = np.asarray(prob_list, dtype=np.float64)  # (P, K)
-    Ts = np.asarray(T_list, dtype=np.float64)  # (N,)
+    Ts = np.atleast_1d(T_list).astype(np.float64)  # (N,)
     P, K = prob.shape
     N = len(Ts)
     if K != len(model_list):

@@ -5,7 +5,8 @@ import numpy as np
 import scipy.constants as sc
 from numpy.linalg import eigvals
 from scipy.integrate import dblquad, quad
-from scipy.interpolate import interp1d, RegularGridInterpolator, RectBivariateSpline
+from scipy.interpolate import (RectBivariateSpline, RegularGridInterpolator,
+                               interp1d)
 
 
 class PolymerPersistenceDependentDihedral:
@@ -143,6 +144,7 @@ class PolymerPersistenceDependentDihedral:
     @staticmethod
     def _update_dihedral(data):
         data = np.asarray(data)
+        data[:, 1] -= data[:, 1].min()
         if data[:, 0].max() == 360 and data[:, 0].min() == 0:
             return data
         else:

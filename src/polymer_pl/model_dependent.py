@@ -1,12 +1,12 @@
 from pathlib import Path
 
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.constants as sc
 from numpy.linalg import eigvals
 from scipy.integrate import quad
 from scipy.interpolate import interp1d
-import matplotlib.cm as cm
 
 # Import the Cython module (after compilation)
 try:
@@ -36,6 +36,7 @@ class PolymerPersistenceDependentDefelection:
                  rotation_labels=None,
                  ris_types=None,
                  ris_labels=None,
+                 deflection_types=None,
                  fittting_method='interpolation',
                  cosine_deg=5):
         """
@@ -72,9 +73,12 @@ class PolymerPersistenceDependentDefelection:
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
         self.ris_labels = ris_labels
         self.ris_types = ris_types
-        self.deflection_types = np.array(rotation_types).copy()
-        mask = self.rotation_types == 0
-        self.deflection_types[mask] = np.roll(self.rotation_types, 1)[mask]
+        if deflection_types is None:
+            self.deflection_types = np.array(rotation_types).copy()
+            mask = self.rotation_types == 0
+            self.deflection_types[mask] = np.roll(self.rotation_types, 1)[mask]
+        else:
+            self.deflection_types = np.array(deflection_types)
         # --- Internal cache for lazy evaluation ---
         self._Mmat = None
         self._lambda_max = None
@@ -117,10 +121,14 @@ class PolymerPersistenceDependentDefelection:
         delimiter = ',' if file_name.suffix == '.csv' else None
         data = np.loadtxt(file_name, delimiter=delimiter)
         return self._update_angle(data)
+    
+    def _minimize_dihedral(self, data):
+        new_energy = data[:, 1] - data[:, 1].min()
+        return np.column_stack((data[:, 0], new_energy))
 
     def _fit_deflection(self, file_name: Path):
         """Fits the deflection angle data."""
-        data = self._update_angle(self._read_data(file_name))
+        data = self._read_data(file_name)
         deflection_func = []
         for i in range(1, data.shape[1]):
             deflection_func.append(
@@ -145,6 +153,7 @@ class PolymerPersistenceDependentDefelection:
                     raise ValueError(
                         f"Either 'data' or 'loc' must be provided for rotation type {rot_id}."
                     )
+                data = self._minimize_dihedral(data)
                 x, y = data[:, 0], data[:, 1]
                 if self.fitting_method == 'interpolation':
                     fitf = interp1d(x,
@@ -483,8 +492,7 @@ class PolymerPersistenceDependentDefelection:
         print("-----------------------------------")
 
     def plot_deflection_angles(self):
-        original = self._update_angle(
-            self._read_data(Path(self.bond_angle_file)))
+        original = self._read_data(Path(self.bond_angle_file))
         fit_angle = self._fit_deflection(Path(self.bond_angle_file))
         colors = cm.get_cmap('tab20')
         x = np.linspace(0, 360, 721)
