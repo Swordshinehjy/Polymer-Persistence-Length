@@ -9,7 +9,7 @@ from numpy.linalg import eigvals
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from scipy.linalg import fractional_matrix_power
-
+from typing import List, Tuple, Union
 # Import the Cython module (after compilation)
 try:
     from . import chain_rotation
@@ -1212,6 +1212,43 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
             plt.show()
 
         return lp
+
+
+def compare_persistence_results(models: List[PolymerPersistence],
+                                labels: List[str],
+                                temperature: Union[float, List[float]],
+                                property='lp'):
+    '''
+    Compare persistence results between different models.
+    Arguments:
+        models: List of persistence models.
+        labels: List of labels for the models.
+        ts: List of temperature arrays.
+        property: Property to compare, e.g., 'lp'.
+    '''
+    T_arr = np.atleast_1d(temperature).astype(np.float64)
+    plt.figure(figsize=(6, 5))
+    for model, label in zip(models, labels):
+        res = model.temperature_scan(T_arr)
+        plt.plot(res['T'], res[property], 'o-', label=label)
+
+    plt.xlabel('Temperature (K)', fontsize=16, fontfamily="Helvetica")
+    if property == 'lp':
+        ylabel = "$N_p$"
+        title = "Persistence Length in Repeat Units"
+    else:
+        raise ValueError(f"Unknown property: {property}")
+    plt.legend()
+    plt.ylabel(ylabel, fontsize=16, fontfamily="Helvetica")
+    plt.xticks(fontsize=14, fontfamily="Helvetica")
+    plt.yticks(fontsize=14, fontfamily="Helvetica")
+    if plt.gca().get_legend_handles_labels()[0]:
+        plt.legend(fontsize=14, prop={'family': 'Helvetica'})
+    plt.grid(True, alpha=0.3)
+    plt.minorticks_on()
+    plt.title(title, fontsize=18, fontfamily="Helvetica")
+    plt.tight_layout()
+    plt.show()
 
 
 # ======================================================================

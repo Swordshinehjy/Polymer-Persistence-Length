@@ -33,7 +33,7 @@ class PolymerPersistenceDependentDihedral:
                  vectorized=False,
                  method='linear'):
         """
-        Initializes the PolymerPersistence model with dependent dihedrals.
+        Initializes the PolymerPersistenceDependentDihedral model with dependent dihedrals.
         
         Args:
             bond_lengths (list or np.ndarray): The lengths of the bonds in the repeat unit.

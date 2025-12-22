@@ -6,6 +6,7 @@ import scipy.constants as sc
 from numpy.linalg import eigvals
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
+from typing import Dict, List, Optional, Tuple, Union
 
 
 class PolymerPlanarity:
@@ -297,10 +298,10 @@ class PolymerPlanarity:
         plt.show()
 
     def boltzmann_distribution_temperature_scan(self,
-                                           T_range,
-                                           resolution=1000,
-                                           cmap='viridis',
-                                           plot_type='imshow'):
+                                                T_range,
+                                                resolution=1000,
+                                                cmap='viridis',
+                                                plot_type='imshow'):
         """
         Compute Boltzmann distribution p(phi,T) for a selected rotation type 
         over a temperature range, return 2D array and plot heatmap.
@@ -337,54 +338,55 @@ class PolymerPlanarity:
             p_matrix = w / denom  # shape (N, M)
 
             plt.figure(figsize=(6, 5))
-            
+
             if plot_type == 'imshow':
                 # Original heatmap plot
                 im = plt.imshow(p_matrix,
-                            aspect='auto',
-                            origin='lower',
-                            cmap=cmap,
-                            extent=[0, 360, T_range[0], T_range[-1]])
-                
+                                aspect='auto',
+                                origin='lower',
+                                cmap=cmap,
+                                extent=[0, 360, T_range[0], T_range[-1]])
+
             elif plot_type == 'contourf':
                 # Contour plot with filled colors
                 # Create meshgrid for contour plot
                 X, Y = np.meshgrid(angles, T)
                 # For example: levels=20 or levels=np.linspace(0, p_matrix.max(), 30)
-                im = plt.contourf(X, Y, p_matrix, 
-                                levels=50,  # Number of contour levels
-                                cmap=cmap, 
-                                extend='both')  # Extend colors to min/max values
+                im = plt.contourf(
+                    X,
+                    Y,
+                    p_matrix,
+                    levels=50,  # Number of contour levels
+                    cmap=cmap,
+                    extend='both')  # Extend colors to min/max values
 
-                # plt.contour(X, Y, p_matrix, 
+                # plt.contour(X, Y, p_matrix,
                 #            levels=10,  # Fewer levels for lines
-                #            colors='black', 
-                #            linewidths=0.5, 
+                #            colors='black',
+                #            linewidths=0.5,
                 #            alpha=0.5)
             elif plot_type == 'contour':
                 X, Y = np.meshgrid(angles, T)
-                im = plt.contour(X, Y, p_matrix,
-                                 levels=10,
-                                 cmap=cmap)
+                im = plt.contour(X, Y, p_matrix, levels=10, cmap=cmap)
             else:
                 raise ValueError(f"plot_type not supported: {plot_type}")
-            
+
             plt.xlabel("Dihedral Angle (deg.)", fontsize=14)
             plt.ylabel("Temperature (K)", fontsize=14)
             plt.title(f"Boltzmann Distribution {label}", fontsize=16)
-            
+
             # Add colorbar
             cbar = plt.colorbar(im)
             cbar.set_label("Probability", fontsize=14, fontfamily="Helvetica")
             cbar.ax.tick_params(labelsize=14)
             plt.setp(cbar.ax.get_yticklabels(), fontfamily="Helvetica")
-            
+
             # Additional settings for contourf plot
             if plot_type == 'contourf' or plot_type == 'contour':
                 # Set axis limits
                 plt.xlim(0, 360)
                 plt.ylim(T_range[0], T_range[-1])
-                
+
             plt.tight_layout()
             plt.show()
 
@@ -526,3 +528,41 @@ class PolymerPlanarity:
 
         return results
 
+
+def compare_planarity_results(models: List[PolymerPlanarity],
+                              labels: List[str],
+                              ts: Union[List[float], float],
+                              property='planarity_corr_length'):
+    '''
+    Compare planarity results between different models.
+    Arguments:
+        models: List of planarity models.
+        labels: List of labels for the models.
+        ts: List of temperature arrays.
+        property: Property to compare, e.g., 'planarity_corr_length', 'cos2'.
+    '''
+    T_arr = np.atleast_1d(ts).astype(np.float64)
+    plt.figure(figsize=(6, 5))
+    for model, label in zip(models, labels):
+        res = model.temperature_scan(T_arr)
+        plt.plot(res['T'], res[property], 'o-', label=label)
+
+    plt.xlabel('Temperature (K)', fontsize=16, fontfamily="Helvetica")
+
+    if property == 'planarity_corr_length':
+        ylabel = r"-1/log(<|cos$\phi$|>)"
+        title = "Planarity Correlation Length"
+    elif property == 'cos2':
+        ylabel = r"<cos²$\phi$>"
+        title = "Average Cosine Square"
+    plt.legend()
+    plt.ylabel(ylabel, fontsize=16, fontfamily="Helvetica")
+    plt.xticks(fontsize=14, fontfamily="Helvetica")
+    plt.yticks(fontsize=14, fontfamily="Helvetica")
+    if plt.gca().get_legend_handles_labels()[0]:
+        plt.legend(fontsize=14, prop={'family': 'Helvetica'})
+    plt.grid(True, alpha=0.3)
+    plt.minorticks_on()
+    plt.title(title, fontsize=18, fontfamily="Helvetica")
+    plt.tight_layout()
+    plt.show()

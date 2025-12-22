@@ -7,6 +7,9 @@ from typing import Dict, List
 
 import numpy as np
 import pandas as pd
+from math import radians, degrees, cos, sin, atan2
+from collections import deque
+import scipy.constants as sc
 
 
 def read_gaussian_output(filename):
@@ -535,3 +538,432 @@ class XYZDeflectionAngleCalculator:
         print(f"Saved: {output_path}")
 
         return output_path
+
+
+def build_connectivity(coords, atoms, covalent_radii=None, scale_factor=1.2):
+    """
+    Automatically determine bonding connectivity based on interatomic distances.
+
+    :param coords: Atomic coordinates array (N, 3), in Ångstroms
+    :param atoms: List of atomic symbols (length N)
+    :param covalent_radii: Optional dictionary of covalent radii (in Å)
+    :param scale_factor: Scaling factor for bond distance threshold (default 1.2)
+    :return: Adjacency list where adj[i] contains indices of atoms bonded to i
+    """
+    if covalent_radii is None:
+        # Default covalent radii (Å) from Cordero et al. (2008), Dalton Trans.
+        # Noble gases are estimated/interpolated
+        covalent_radii = {
+            'H': 0.37, 'He': 0.32, 'Li': 1.34, 'Be': 0.90, 'B': 0.82,
+            'C': 0.77, 'N': 0.75, 'O': 0.73, 'F': 0.71, 'Ne': 0.69,
+            'Na': 1.54, 'Mg': 1.30, 'Al': 1.18, 'Si': 1.11, 'P': 1.10,
+            'S': 1.03, 'Cl': 0.99, 'Ar': 0.96, 'K': 1.93, 'Ca': 1.71,
+            'Sc': 1.48, 'Ti': 1.36, 'V': 1.34, 'Cr': 1.22, 'Mn': 1.19,
+            'Fe': 1.16, 'Co': 1.11, 'Ni': 1.10, 'Cu': 1.12, 'Zn': 1.18,
+            'Ga': 1.24, 'Ge': 1.21, 'As': 1.21, 'Se': 1.16, 'Br': 1.14,
+            'Kr': 1.17, 'Rb': 2.06, 'Sr': 1.85, 'Y': 1.63, 'Zr': 1.54,
+            'Nb': 1.47, 'Mo': 1.38, 'Tc': 1.28, 'Ru': 1.25, 'Rh': 1.25,
+            'Pd': 1.20, 'Ag': 1.28, 'Cd': 1.36, 'In': 1.42, 'Sn': 1.40,
+            'Sb': 1.40, 'Te': 1.36, 'I': 1.33,
+        }
+
+    n_atoms = len(coords)
+
+    # Vector of covalent radii for each atom (fallback to 0.8 Å for unknown elements)
+    radii = np.array([covalent_radii.get(symbol, 0.8) for symbol in atoms])
+
+    # Compute all pairwise distance matrices efficiently
+    # Shape: (n_atoms, n_atoms)
+    diffs = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
+    dist_matrix = np.linalg.norm(diffs, axis=-1)
+
+    # Matrix of summed covalent radii
+    sum_radii_matrix = radii[:, np.newaxis] + radii[np.newaxis, :]
+
+    # Bond threshold matrix
+    threshold_matrix = sum_radii_matrix * scale_factor
+
+    # Bond mask: distance <= threshold and not self (dist > 0)
+    bond_mask = (dist_matrix <= threshold_matrix) & (dist_matrix > 0)
+
+    # Extract bonded pairs (i, j) with i < j to avoid duplicates
+    i_indices, j_indices = np.where(np.triu(bond_mask, k=1))
+
+    # Build adjacency list
+    adj_list = [[] for _ in range(n_atoms)]
+    for i, j in zip(i_indices, j_indices):
+        adj_list[i].append(j)
+        adj_list[j].append(i)
+
+    return adj_list
+
+
+def bfs_rotating_group(adj_list, axis_atom1, axis_atom2):
+    """
+    Find atoms that need to be rotated around a given axis
+    :param adj_list: connectivity list (adjacency list)
+    :param axis_atom1: rotation axis atom 1 index (0-based)
+    :param axis_atom2: rotation axis atom 2 index (0-based)
+    :return: rotating group atom indices (0-based)
+    """
+    n_atoms = len(adj_list)
+    visited = [False] * n_atoms
+    queue = deque([axis_atom2])
+    visited[axis_atom2] = True
+    visited[axis_atom1] = True  # 锁定轴原子1侧
+
+    rotating_group = []
+
+    while queue:
+        current = queue.popleft()
+        rotating_group.append(current)
+        for neighbor in adj_list[current]:
+            if not visited[neighbor]:
+                visited[neighbor] = True
+                queue.append(neighbor)
+
+    return rotating_group
+
+
+def calculate_dihedral(coords, a, b, c, d):
+    """
+    Calculate dihedral a-b-c-d in degrees
+    :param coords: coordinates of atoms (numpy array)
+    :param a,b,c,d: atom indices (0-based)
+    :return: dihedral angle in degrees
+    """
+    v1 = coords[b] - coords[a]
+    v2 = coords[c] - coords[b]
+    v3 = coords[d] - coords[c]
+
+    n1 = np.cross(v1, v2)
+    n2 = np.cross(v2, v3)
+
+    n1_norm = n1 / np.linalg.norm(n1)
+    n2_norm = n2 / np.linalg.norm(n2)
+    v2_norm = v2 / np.linalg.norm(v2)
+    x = np.dot(n1_norm, n2_norm)
+    y = np.dot(np.cross(n1_norm, n2_norm), v2_norm)
+
+    angle = atan2(y, x)
+    return degrees(angle)
+
+
+def rotate_atoms(coords, atom_indices, axis_point1, axis_point2, angle_deg):
+    """
+    Rotate atoms around a given axis
+    :param coords: initial coordinates (numpy array)
+    :param atom_indices: atom indices to rotate (0-based)
+    :param axis_point1: axis point 1 (numpy array)
+    :param axis_point2: axis point 2 (numpy array)
+    :param angle_deg: rotation angle in degrees
+    :return: rotated coordinates
+    """
+    axis_vec = axis_point2 - axis_point1
+    axis_len = np.linalg.norm(axis_vec)
+    if axis_len < 1e-6:
+        raise ValueError("Invalid rotation axis: points are too close")
+    axis_vec = axis_vec / axis_len
+
+    center = axis_point1
+
+    translated = coords.copy()
+    translated[atom_indices] -= center
+
+    theta = radians(angle_deg)
+    c = cos(theta)
+    s = sin(theta)
+    t = 1 - c
+
+    x, y, z = axis_vec
+    rot_matrix = np.array(
+        [[t * x * x + c, t * x * y - z * s, t * x * z + y * s],
+         [t * x * y + z * s, t * y * y + c, t * y * z - x * s],
+         [t * x * z - y * s, t * y * z + x * s, t * z * z + c]])
+
+    rotated = translated.copy()
+    for i in atom_indices:
+        rotated[i] = rot_matrix @ translated[i]
+
+    rotated[atom_indices] += center
+    return rotated
+
+
+def generate_dihedral_scan_gjf(atoms,
+                               coords,
+                               charge,
+                               spin_multiplicity,
+                               method,
+                               dihedral1,
+                               dihedral2,
+                               axis_atom1_idx,
+                               axis_atom2_idx,
+                               scanned_angles,
+                               output_filename="dihedral_scan.gjf",
+                               output_dir="."):
+    """
+    Generate a Gaussian input file (.gjf) for dihedral angle scan.
+
+    :param atoms: List of atomic symbols
+    :param coords: Numpy array of atomic coordinates (N, 3)
+    :param charge: Molecular charge
+    :param spin_multiplicity: Spin multiplicity
+    :param method: Gaussian calculation method line
+    :param dihedral1: First dihedral to fix (list of 4 atom indices, 1-indexed)
+    :param dihedral2: Second dihedral to fix (list of 4 atom indices, 1-indexed)
+    :param axis_atom1_idx: First atom of rotation axis (0-indexed)
+    :param axis_atom2_idx: Second atom of rotation axis (0-indexed)
+    :param scanned_angles: List of angles to scan (in degrees)
+    :param output_filename: Output file name
+    """
+    # Convert dihedrals to 0-indexed
+    dihedral1_idx = [i - 1 for i in dihedral1]
+    dihedral2_idx = [i - 1 for i in dihedral2]
+
+    # Build connectivity
+    adjacency = build_connectivity(coords, atoms)
+
+    # Find rotating atoms
+    rotating_atoms = bfs_rotating_group(adjacency, axis_atom1_idx,
+                                        axis_atom2_idx)
+    print(f"Rotating atoms (0-based): {rotating_atoms}")
+
+    # Calculate initial dihedral angles
+    init_dih1 = calculate_dihedral(coords, *dihedral1_idx)
+    init_dih2 = calculate_dihedral(coords, *dihedral2_idx)
+    print(
+        f"Initial Dihedral 1: {init_dih1:.2f} deg, Dihedral 2: {init_dih2:.2f} deg"
+    )
+
+    # Define rotation axis
+    axis_point1 = coords[axis_atom1_idx]
+    axis_point2 = coords[axis_atom2_idx]
+
+    # Generate GJF blocks for each angle
+    gjf_blocks = []
+
+    for k, angle in enumerate(scanned_angles, 1):
+        # Rotate atoms
+        new_coords = rotate_atoms(coords=coords.copy(),
+                                  atom_indices=rotating_atoms,
+                                  axis_point1=axis_point1,
+                                  axis_point2=axis_point2,
+                                  angle_deg=angle)
+
+        # Calculate current dihedrals
+        current_dih1 = calculate_dihedral(new_coords, *dihedral1_idx)
+        current_dih2 = calculate_dihedral(new_coords, *dihedral2_idx)
+        print(
+            f"{angle} deg: Dihedral 1={current_dih1:.2f} deg, Dihedral 2={current_dih2:.2f} deg"
+        )
+
+        # Create GJF block
+        block_lines = []
+        block_lines.append(f"%chk={output_dir}/{k}.chk")
+        block_lines.append(method)
+        block_lines.append("")
+        block_lines.append(
+            f"Dihedral Scan: {dihedral1}={angle} deg, {dihedral2}={angle} deg")
+        block_lines.append("")
+        block_lines.append(f"{charge} {spin_multiplicity}")
+
+        # Add atoms and coordinates
+        for i, atom in enumerate(atoms):
+            x, y, z = new_coords[i]
+            block_lines.append(f"{atom} {x:.12f} {y:.12f} {z:.12f}")
+
+        # Add ModRedundant section
+        block_lines.append("")
+        block_lines.append(
+            f"D {dihedral1[0]} {dihedral1[1]} {dihedral1[2]} {dihedral1[3]} F")
+        block_lines.append(
+            f"D {dihedral2[0]} {dihedral2[1]} {dihedral2[2]} {dihedral2[3]} F")
+        block_lines.append("")
+
+        gjf_blocks.append("\n".join(block_lines))
+
+    # Join blocks with --link1--
+    gjf_content = "\n\n--link1--\n".join(gjf_blocks)
+    gjf_content += "\n"
+    # Write to file
+    output = Path(output_dir) / output_filename
+    with open(output, 'w') as f:
+        f.write(gjf_content)
+
+    print(f"\nSuccessfully Generated GJF file: {output}")
+    print(
+        f"Contain {len(scanned_angles)} points ({scanned_angles[0]}deg to {scanned_angles[-1]}deg)"
+    )
+
+
+ELEMENTS = {
+    'H', 'He',
+    'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
+    'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar',
+    'K', 'Ca', 'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
+    'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr',
+    'Rb', 'Sr', 'Y', 'Zr', 'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd',
+    'In', 'Sn', 'Sb', 'Te', 'I', 'Xe',
+    'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy',
+    'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt',
+    'Au', 'Hg', 'Tl', 'Pb', 'Bi', 'Po', 'At', 'Rn'
+}
+
+def read_gjf_coords(filename):
+    atoms = []
+    coords = []
+    lines = []
+    with open(filename, 'r') as f:
+        for line in f:
+            lines.append(line.rstrip('\n'))
+
+    found_charge_mult = False
+    start_index = -1
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('%') or stripped.startswith('#') or not stripped:
+            continue
+        if re.match(r'^\s*-?\d+\s+-?\d+', stripped):
+            found_charge_mult = True
+            start_index = i + 1
+            break
+
+    if not found_charge_mult:
+        raise ValueError("Could not find charge and multiplicity line.")
+
+    for line in lines[start_index:]:
+        s = line.strip()
+        if not s:
+            break
+        if s.startswith('%') or s.startswith('#'):
+            break 
+        parts = s.split()
+        if len(parts) < 4:
+            break 
+        atom_raw = parts[0]
+
+        elem_match = re.match(r'^([A-Za-z]+)', atom_raw)
+        if not elem_match:
+            break
+        elem = elem_match.group(1).capitalize()
+        if elem not in ELEMENTS:
+            break  
+        try:
+            x, y, z = map(float, parts[1:4])
+        except ValueError:
+            break  
+
+        atoms.append(elem)
+        coords.append([x, y, z])
+
+    coords = np.array(coords) if coords else np.empty((0, 3))
+    return atoms, coords
+
+
+def gaussian_dihedral_energy_single_xyz(log_file, dihedral_atoms):
+
+    HARTREE_TO_KJMOL = (sc.physical_constants["Hartree energy"][0] *
+                        sc.Avogadro / 1000.0)
+    idx = [i - 1 for i in dihedral_atoms]
+    xyz_file = Path(log_file).with_suffix(".xyz")
+    txt_file = Path(log_file).with_suffix(".txt")
+
+    def dihedral(p1, p2, p3, p4):
+        b0 = p1 - p2
+        b1 = p3 - p2
+        b2 = p4 - p3
+        b1 /= np.linalg.norm(b1)
+        v = b0 - np.dot(b0, b1) * b1
+        w = b2 - np.dot(b2, b1) * b1
+        x = np.dot(v, w)
+        y = np.dot(np.cross(b1, v), w)
+        return np.degrees(np.arctan2(y, x))
+
+    def extract_last_energy(text):
+        pats = [
+            r"SCF Done:\s+E\(.+?\)\s+=\s+(-?\d+\.\d+)",
+            r"EUMP2\s+=\s+(-?\d+\.\d+)",
+        ]
+        for pat in pats:
+            m = re.findall(pat, text)
+            if m:
+                return float(m[-1])
+        return None
+
+    def extract_last_geometry(text):
+        lines = text.splitlines()
+        geom = []
+        i = 0
+        while i < len(lines):
+            if any(k in lines[i] for k in (
+                    "Standard orientation:",
+                    "Input orientation:",
+                    "Z-Matrix orientation:",
+            )):
+                geom = []
+                i += 1
+                dash = 0
+                while i < len(lines):
+                    if "-----" in lines[i]:
+                        dash += 1
+                        if dash == 2:
+                            i += 1
+                            continue
+                        if dash == 3:
+                            break
+                    elif dash == 2:
+                        p = lines[i].split()
+                        if len(p) >= 6:
+                            geom.append((
+                                int(p[1]),
+                                float(p[3]),
+                                float(p[4]),
+                                float(p[5]),
+                            ))
+                    i += 1
+            i += 1
+        return geom
+
+    with open(log_file) as f:
+        lines = f.readlines()
+
+    frames = []
+    buffer = ""
+
+    for line in lines:
+        buffer += line
+
+        if "Stationary point found." in line:
+
+            energy = extract_last_energy(buffer)
+            geom = extract_last_geometry(buffer)
+
+            if energy is not None and geom:
+                coords = np.array([[x, y, z] for _, x, y, z in geom])
+                angle = dihedral(
+                    coords[idx[0]],
+                    coords[idx[1]],
+                    coords[idx[2]],
+                    coords[idx[3]],
+                )
+                frames.append((angle, energy * HARTREE_TO_KJMOL, geom))
+
+    if not frames:
+        raise RuntimeError("No optimized structures found")
+
+    energies = np.array([e for _, e, _ in frames])
+    energies -= energies.min()
+
+    with open(xyz_file, "w") as f:
+        for i, ((angle, _, geom), e) in enumerate(zip(frames, energies), 1):
+            f.write(f"{len(geom)}\n")
+            f.write(f"step={i}  dihedral={angle:.2f} deg  "
+                    f"rel_energy={e:.6f} kJ/mol\n")
+            for a, x, y, z in geom:
+                f.write(f"{a:2d} {x:.12f} {y:.12f} {z:.12f}\n")
+
+    with open(txt_file, "w") as f:
+        for (angle, _, _), e in zip(frames, energies):
+            f.write(f"{angle:.2f} {e:.6f}\n")
+
+    print(f"Extracted {len(frames)} optimized structures")

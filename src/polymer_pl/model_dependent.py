@@ -40,7 +40,7 @@ class PolymerPersistenceDependentDefelection:
                  fittting_method='interpolation',
                  cosine_deg=5):
         """
-        Initializes the PolymerPersistence model.
+        Initializes the PolymerPersistenceDependentDefelection model.
 
         Args:
             bond_lengths (list or np.ndarray): The lengths of the bonds in the repeat unit.
