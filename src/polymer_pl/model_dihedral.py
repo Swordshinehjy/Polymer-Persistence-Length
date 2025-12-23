@@ -29,7 +29,7 @@ class PolymerPersistenceDependentDihedral:
                  coupled_pairs=None,
                  coupled_labels=None,
                  fitting_method='interpolation',
-                 cosine_deg=5,
+                 param_n=5,
                  vectorized=False,
                  method='linear'):
         """
@@ -48,8 +48,8 @@ class PolymerPersistenceDependentDihedral:
             coupled_pairs (list of tuples, optional): List of tuples indicating which dihedrals are coupled.
                                                      Each tuple contains indices of coupled dihedrals.
             coupled_labels (dict, optional): Dictionary mapping coupled pair indices to 2D data files.
-            fitting_method (str, optional): The method used for fitting the data. 'interpolation' or 'cosine'.
-            cosine_deg (int, optional): The number of degrees to use for the cosine fitting method.
+            fitting_method (str, optional): The method used for fitting the data. 'interpolation', 'cosine' or 'fourier'.
+            param_n (int, optional): The order for fitting the data.
         """
         self.bond_lengths = np.asarray(
             bond_lengths) if bond_lengths is not None else None
@@ -93,7 +93,7 @@ class PolymerPersistenceDependentDihedral:
         self._coupled_data = {}
         self._full_data = {}
         self.fitting_method = fitting_method
-        self.cosine_deg = cosine_deg
+        self.param_n = param_n
 
         # Build mapping of dihedral index to its type
         if self.rotation_types is not None:
@@ -186,11 +186,20 @@ class PolymerPersistenceDependentDihedral:
                                     y,
                                     kind='cubic',
                                     fill_value="extrapolate")
-                else:  # cosine
+                elif self.fitting_method == 'cosine':
                     p = np.polynomial.polynomial.polyfit(
-                        np.cos(np.deg2rad(x)), y, self.cosine_deg)
+                        np.cos(np.deg2rad(x)), y, self.param_n)
                     fitf = (lambda p_val: lambda z: np.polynomial.polynomial.
                             polyval(np.cos(np.deg2rad(z)), p_val))(p)
+                elif self.fitting_method == 'fourier':
+                    rad = np.deg2rad(x)
+                    a = np.column_stack([np.cos(n * rad) for n in range(self.param_n + 1)])
+                    coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
+                    fitf = (lambda c, ord_val:
+                            lambda z: np.sum([
+                                c[n] * np.cos(n * np.deg2rad(z))
+                                for n in range(ord_val + 1)
+                            ], axis=0))(coeffs, self.param_n)
                 self._computational_data[rot_id] = {'fitf': fitf, **info}
             except FileNotFoundError:
                 print(

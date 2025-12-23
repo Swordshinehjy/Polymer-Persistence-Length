@@ -23,8 +23,8 @@ class PolymerPlanarity:
                  temperature=300.0,
                  rotation_types=None,
                  rotation_labels=None,
-                 fittting_method='cosine',
-                 cosine_deg=15):
+                 fitting_method='cosine',
+                 param_n=15):
         """
         Initializes the Polymer Planarity model.
 
@@ -36,8 +36,8 @@ class PolymerPlanarity:
             rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
             ris_types (list or np.ndarray, optional): An array of integers mapping each bond to ris model.
             ris_labels (dict, optional): A dictionary mapping ris_types to data files.
-            fittting_method (str, optional): The method used for fitting the data. 'interpolation' or 'cosine'.
-            cosine_deg (int, optional): The number of degrees to use for the cosine fitting method.
+            fitting_method (str, optional): The method used for fitting the data. 'interpolation', 'cosine' or 'fourier'.
+            param_n (int, optional): The order for fitting the data.
         """
         self.rotation_types = np.array(rotation_types)
         self.temperature = temperature
@@ -54,8 +54,8 @@ class PolymerPlanarity:
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
 
         self._data = {}
-        self.fitting_method = fittting_method
-        self.cosine_deg = cosine_deg
+        self.fitting_method = fitting_method
+        self.param_n = param_n
         self._cos = None
         self._cos2 = None
         self._cosabs = None
@@ -93,11 +93,19 @@ class PolymerPlanarity:
                             energies,
                             kind='cubic',
                             fill_value="extrapolate")
-        else:  # cosine
+        elif self.fitting_method == 'cosine':
             p = np.polynomial.polynomial.polyfit(
-                np.cos(np.deg2rad(angles_deg)), energies, self.cosine_deg)
+                np.cos(np.deg2rad(angles_deg)), energies, self.param_n)
             fitf = (lambda p_val: lambda z: np.polynomial.polynomial.polyval(
                 np.cos(np.deg2rad(z)), p_val))(p)
+        elif self.fitting_method == 'fourier':
+            rad = np.deg2rad(angles_deg)
+            a = np.column_stack(
+                [np.cos(n * rad) for n in range(self.param_n + 1)])
+            coeffs, *_ = np.linalg.lstsq(a, energies, rcond=None)
+            fitf = (lambda c, ord_val: lambda z: np.sum(
+                [c[n] * np.cos(n * np.deg2rad(z)) for n in range(ord_val + 1)],
+                axis=0))(coeffs, self.param_n)
         return fitf
 
     def _compute(self):

@@ -38,8 +38,8 @@ class PolymerPersistence:
                  rotation_labels=None,
                  ris_types=None,
                  ris_labels=None,
-                 fittting_method='interpolation',
-                 cosine_deg=5):
+                 fitting_method='interpolation',
+                 param_n=5):
         """
         Initializes the PolymerPersistence model.
 
@@ -53,8 +53,8 @@ class PolymerPersistence:
             rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
             ris_types (list or np.ndarray, optional): An array of integers mapping each bond to ris model.
             ris_labels (dict, optional): A dictionary mapping ris_types to data files.
-            fittting_method (str, optional): The method used for fitting the data. 'interpolation' or 'cosine'.
-            cosine_deg (int, optional): The number of degrees to use for the cosine fitting method.
+            fitting_method (str, optional): The method used for fitting the data. 'interpolation', 'cosine' or 'fourier'.
+            param_n (int, optional): The order for fitting the data.
         """
         self.bond_lengths = np.asarray(
             bond_lengths) if bond_lengths is not None else None
@@ -80,8 +80,8 @@ class PolymerPersistence:
         self._lp_in_repeats = None
         self._computational_data = {}
         self._full_data = {}
-        self.fitting_method = fittting_method
-        self.cosine_deg = cosine_deg
+        self.fitting_method = fitting_method
+        self.param_n = param_n
 
     @staticmethod
     def _read_ris_data(file_name: Path):
@@ -139,11 +139,20 @@ class PolymerPersistence:
                                     y,
                                     kind='cubic',
                                     fill_value="extrapolate")
-                else:  # cosine
+                elif self.fitting_method == 'cosine':
                     p = np.polynomial.polynomial.polyfit(
-                        np.cos(np.deg2rad(x)), y, self.cosine_deg)
+                        np.cos(np.deg2rad(x)), y, self.param_n)
                     fitf = (lambda p_val: lambda z: np.polynomial.polynomial.
                             polyval(np.cos(np.deg2rad(z)), p_val))(p)
+                elif self.fitting_method == 'fourier':
+                    rad = np.deg2rad(x)
+                    a = np.column_stack([np.cos(n * rad) for n in range(self.param_n + 1)])
+                    coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
+                    fitf = (lambda c, ord_val:
+                            lambda z: np.sum([
+                                c[n] * np.cos(n * np.deg2rad(z))
+                                for n in range(ord_val + 1)
+                            ], axis=0))(coeffs, self.param_n)
                 self._computational_data[rot_id] = {'fitf': fitf, **info}
             except FileNotFoundError:
                 print(
@@ -174,7 +183,7 @@ class PolymerPersistence:
                                     fill_value="extrapolate")
                 else:  # cosine
                     p = np.polynomial.polynomial.polyfit(
-                        np.cos(np.deg2rad(x)), y, self.cosine_deg)
+                        np.cos(np.deg2rad(x)), y, self.param_n)
                     fitf = (lambda p_val: lambda z: np.polynomial.polynomial.
                             polyval(np.cos(np.deg2rad(z)), p_val))(p)
                 norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval),
