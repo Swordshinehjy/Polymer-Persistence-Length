@@ -45,14 +45,18 @@ class GaussianStructureAnalyzer:
                 if matches:
                     for j, match in enumerate(matches):
                         coords, atoms = self._parse_coordinates_section(match)
-                        if coords and len(coords) > 2:  # Need at least 3 atoms to be valid
+                        if coords and len(
+                                coords
+                        ) > 2:  # Need at least 3 atoms to be valid
                             all_coordinates.append((coords, atoms))
 
                     if all_coordinates:
                         break
 
             if not all_coordinates:
-                print("Coordinate information not found, trying broader search...")
+                print(
+                    "Coordinate information not found, trying broader search..."
+                )
                 # Try broader search
                 lines = content.split('\n')
                 coords, atoms = self._parse_raw_lines(lines)
@@ -60,14 +64,20 @@ class GaussianStructureAnalyzer:
                     all_coordinates.append((coords, atoms))
 
             if not all_coordinates:
-                print("Error: Unable to extract coordinate information from file")
+                print(
+                    "Error: Unable to extract coordinate information from file"
+                )
                 print("Please confirm this is a valid Gaussian output file")
                 return False
 
             # Take the last coordinate set as the final optimized structure
             self.final_structure, self.atom_types = all_coordinates[-1]
-            print(f"Successfully read final optimized structure with {len(self.final_structure)} atoms")
-            print(f"Atom position number range: 1 to {len(self.final_structure)}")
+            print(
+                f"Successfully read final optimized structure with {len(self.final_structure)} atoms"
+            )
+            print(
+                f"Atom position number range: 1 to {len(self.final_structure)}"
+            )
             self.final_structure = np.array(self.final_structure)
             return True
 
@@ -101,10 +111,14 @@ class GaussianStructureAnalyzer:
                 r'\s*(\d+)\s+(\d+)\s+(\d+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)',
                 line)
             if match:  # If match is successful
-                atom_num, atomic_num, atom_type, x, y, z = match.groups()  # Extract matched groups
-                coordinates.append(np.array([float(x), float(y), float(z)]))  # Convert coordinates to array and add to list
+                atom_num, atomic_num, atom_type, x, y, z = match.groups(
+                )  # Extract matched groups
+                coordinates.append(np.array([
+                    float(x), float(y), float(z)
+                ]))  # Convert coordinates to array and add to list
                 # Determine atom type based on atomic number
-                atom_symbol = self._atomic_number_to_symbol(int(atomic_num))  # Convert atomic number to atom symbol
+                atom_symbol = self._atomic_number_to_symbol(
+                    int(atomic_num))  # Convert atomic number to atom symbol
                 atom_types.append(atom_symbol)  # Add atom symbol to type list
 
         return coordinates, atom_types  # Return coordinate list and atom type list
@@ -197,7 +211,8 @@ class GaussianStructureAnalyzer:
             raise ValueError("Please read the Gaussian output file first.")
 
         # Ensure all indices are integers
-        if not all(isinstance(atom, (int, np.integer)) for atom in atom_sequence):
+        if not all(
+                isinstance(atom, (int, np.integer)) for atom in atom_sequence):
             raise TypeError("All atom indices must be integers.")
 
         # Convert to 0-based index
@@ -210,7 +225,6 @@ class GaussianStructureAnalyzer:
 
         return indices
 
-
     def calculate_bond_vectors(self, atom_sequence: List[int]) -> np.ndarray:
         """
         Calculate normalized bond vectors for a sequence of atoms.
@@ -218,7 +232,8 @@ class GaussianStructureAnalyzer:
         indices = self._validate_atom_sequence(atom_sequence)
 
         # Compute bond vectors
-        bond_vectors = self.final_structure[indices[1:]] - self.final_structure[indices[:-1]]
+        bond_vectors = self.final_structure[
+            indices[1:]] - self.final_structure[indices[:-1]]
 
         # Normalize (avoid division by zero)
         norms = np.linalg.norm(bond_vectors, axis=1, keepdims=True)
@@ -226,8 +241,8 @@ class GaussianStructureAnalyzer:
 
         return bond_vectors_normalized
 
-
-    def calculate_deflection_angles(self, atom_sequence: List[int]) -> np.ndarray:
+    def calculate_deflection_angles(self,
+                                    atom_sequence: List[int]) -> np.ndarray:
         """
         Calculate signed deflection angles between sequential bond vectors.
 
@@ -237,7 +252,9 @@ class GaussianStructureAnalyzer:
         3. Sign of angle determined by dot(cross_current, z_ref).
         """
         if len(atom_sequence) < 3:
-            raise ValueError("At least 3 atoms are required to calculate deflection angles.")
+            raise ValueError(
+                "At least 3 atoms are required to calculate deflection angles."
+            )
 
         bond_vectors = self.calculate_bond_vectors(atom_sequence)
 
@@ -264,11 +281,11 @@ class GaussianStructureAnalyzer:
 
         return angles_deg * signs
 
-
     def calculate_bond_lengths(self, atom_sequence: List[int]) -> np.ndarray:
         """
         Compute bond lengths between sequential atoms in the sequence.
         """
         indices = self._validate_atom_sequence(atom_sequence)
-        diffs = self.final_structure[indices[:-1]] - self.final_structure[indices[1:]]
+        diffs = self.final_structure[indices[:-1]] - self.final_structure[
+            indices[1:]]
         return np.linalg.norm(diffs, axis=1)

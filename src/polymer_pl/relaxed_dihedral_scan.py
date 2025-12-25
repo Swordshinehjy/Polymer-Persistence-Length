@@ -554,17 +554,59 @@ def build_connectivity(coords, atoms, covalent_radii=None, scale_factor=1.2):
         # Default covalent radii (Å) from Cordero et al. (2008), Dalton Trans.
         # Noble gases are estimated/interpolated
         covalent_radii = {
-            'H': 0.37, 'He': 0.32, 'Li': 1.34, 'Be': 0.90, 'B': 0.82,
-            'C': 0.77, 'N': 0.75, 'O': 0.73, 'F': 0.71, 'Ne': 0.69,
-            'Na': 1.54, 'Mg': 1.30, 'Al': 1.18, 'Si': 1.11, 'P': 1.10,
-            'S': 1.03, 'Cl': 0.99, 'Ar': 0.96, 'K': 1.93, 'Ca': 1.71,
-            'Sc': 1.48, 'Ti': 1.36, 'V': 1.34, 'Cr': 1.22, 'Mn': 1.19,
-            'Fe': 1.16, 'Co': 1.11, 'Ni': 1.10, 'Cu': 1.12, 'Zn': 1.18,
-            'Ga': 1.24, 'Ge': 1.21, 'As': 1.21, 'Se': 1.16, 'Br': 1.14,
-            'Kr': 1.17, 'Rb': 2.06, 'Sr': 1.85, 'Y': 1.63, 'Zr': 1.54,
-            'Nb': 1.47, 'Mo': 1.38, 'Tc': 1.28, 'Ru': 1.25, 'Rh': 1.25,
-            'Pd': 1.20, 'Ag': 1.28, 'Cd': 1.36, 'In': 1.42, 'Sn': 1.40,
-            'Sb': 1.40, 'Te': 1.36, 'I': 1.33,
+            'H': 0.37,
+            'He': 0.32,
+            'Li': 1.34,
+            'Be': 0.90,
+            'B': 0.82,
+            'C': 0.77,
+            'N': 0.75,
+            'O': 0.73,
+            'F': 0.71,
+            'Ne': 0.69,
+            'Na': 1.54,
+            'Mg': 1.30,
+            'Al': 1.18,
+            'Si': 1.11,
+            'P': 1.10,
+            'S': 1.03,
+            'Cl': 0.99,
+            'Ar': 0.96,
+            'K': 1.93,
+            'Ca': 1.71,
+            'Sc': 1.48,
+            'Ti': 1.36,
+            'V': 1.34,
+            'Cr': 1.22,
+            'Mn': 1.19,
+            'Fe': 1.16,
+            'Co': 1.11,
+            'Ni': 1.10,
+            'Cu': 1.12,
+            'Zn': 1.18,
+            'Ga': 1.24,
+            'Ge': 1.21,
+            'As': 1.21,
+            'Se': 1.16,
+            'Br': 1.14,
+            'Kr': 1.17,
+            'Rb': 2.06,
+            'Sr': 1.85,
+            'Y': 1.63,
+            'Zr': 1.54,
+            'Nb': 1.47,
+            'Mo': 1.38,
+            'Tc': 1.28,
+            'Ru': 1.25,
+            'Rh': 1.25,
+            'Pd': 1.20,
+            'Ag': 1.28,
+            'Cd': 1.36,
+            'In': 1.42,
+            'Sn': 1.40,
+            'Sb': 1.40,
+            'Te': 1.36,
+            'I': 1.33,
         }
 
     n_atoms = len(coords)
@@ -797,17 +839,15 @@ def generate_dihedral_scan_gjf(atoms,
 
 
 ELEMENTS = {
-    'H', 'He',
-    'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
-    'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar',
-    'K', 'Ca', 'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
-    'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr',
-    'Rb', 'Sr', 'Y', 'Zr', 'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd',
-    'In', 'Sn', 'Sb', 'Te', 'I', 'Xe',
-    'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy',
-    'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt',
-    'Au', 'Hg', 'Tl', 'Pb', 'Bi', 'Po', 'At', 'Rn'
+    'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al',
+    'Si', 'P', 'S', 'Cl', 'Ar', 'K', 'Ca', 'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe',
+    'Co', 'Ni', 'Cu', 'Zn', 'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr', 'Rb', 'Sr',
+    'Y', 'Zr', 'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In', 'Sn',
+    'Sb', 'Te', 'I', 'Xe', 'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm',
+    'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Hf', 'Ta', 'W',
+    'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg', 'Tl', 'Pb', 'Bi', 'Po', 'At', 'Rn'
 }
+
 
 def read_gjf_coords(filename):
     atoms = []
@@ -821,7 +861,8 @@ def read_gjf_coords(filename):
     start_index = -1
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith('%') or stripped.startswith('#') or not stripped:
+        if stripped.startswith('%') or stripped.startswith(
+                '#') or not stripped:
             continue
         if re.match(r'^\s*-?\d+\s+-?\d+', stripped):
             found_charge_mult = True
@@ -836,10 +877,10 @@ def read_gjf_coords(filename):
         if not s:
             break
         if s.startswith('%') or s.startswith('#'):
-            break 
+            break
         parts = s.split()
         if len(parts) < 4:
-            break 
+            break
         atom_raw = parts[0]
 
         elem_match = re.match(r'^([A-Za-z]+)', atom_raw)
@@ -847,11 +888,11 @@ def read_gjf_coords(filename):
             break
         elem = elem_match.group(1).capitalize()
         if elem not in ELEMENTS:
-            break  
+            break
         try:
             x, y, z = map(float, parts[1:4])
         except ValueError:
-            break  
+            break
 
         atoms.append(elem)
         coords.append([x, y, z])

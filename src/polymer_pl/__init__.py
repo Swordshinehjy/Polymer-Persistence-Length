@@ -1,5 +1,5 @@
 from . import (chain_rotation, deflection, model, model_dependent,
-               model_dihedral, planarity, relaxed_dihedral_scan)
+               model_dihedral, planarity, relaxed_dihedral_scan, backbone)
 from .model import (PolymerPersistence, compute_persistence_alternating,
                     compute_persistence_terpolymer,
                     compare_persistence_results,
@@ -12,5 +12,6 @@ from .relaxed_dihedral_scan import (GaussianLogParser,
                                     generate_dihedral_scan_gjf,
                                     read_gjf_coords,
                                     XYZDeflectionAngleCalculator)
+from .backbone import PolymerBackbone
 
-__version__ = '0.9.21'
+__version__ = '0.9.24'

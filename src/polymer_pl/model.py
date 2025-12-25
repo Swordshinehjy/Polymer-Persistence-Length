@@ -125,7 +125,10 @@ class PolymerPersistence:
 
         for rot_id, info in self.rotation_labels.items():
             try:
-                if 'data' in info:
+                if 'fitf' in info:
+                    self._computational_data[rot_id] = {'fitf': info['fitf'], **info}
+                    continue
+                elif 'data' in info:
                     data = self._update_dihedral(info['data'])
                 elif 'loc' in info:
                     data = self._read_data(Path(info['loc']))
@@ -159,7 +162,6 @@ class PolymerPersistence:
                     f"Warning: Data file not found. Skipping rotation type {rot_id}."
                 )
                 continue
-        # print("Computational data prepared.")
 
     def _prepare_full_data(self):
         """Sets up interpolation functions from data files."""
@@ -167,25 +169,38 @@ class PolymerPersistence:
             return
         for rot_id, info in self.rotation_labels.items():
             try:
-                if 'data' in info:
-                    data = self._update_dihedral(info['data'])
-                elif 'loc' in info:
-                    data = self._read_data(Path(info['loc']))
+                if 'fitf' in info:
+                    fitf = info['fitf']
+                    data = np.empty((0, 2))
                 else:
-                    raise ValueError(
-                        f"Either 'data' or 'loc' must be provided for rotation type {rot_id}."
-                    )
-                x, y = data[:, 0], data[:, 1]
-                if self.fitting_method == 'interpolation':
-                    fitf = interp1d(x,
-                                    y,
-                                    kind='cubic',
-                                    fill_value="extrapolate")
-                else:  # cosine
-                    p = np.polynomial.polynomial.polyfit(
-                        np.cos(np.deg2rad(x)), y, self.param_n)
-                    fitf = (lambda p_val: lambda z: np.polynomial.polynomial.
-                            polyval(np.cos(np.deg2rad(z)), p_val))(p)
+                    if 'data' in info:
+                        data = self._update_dihedral(info['data'])
+                    elif 'loc' in info:
+                        data = self._read_data(Path(info['loc']))
+                    else:
+                        raise ValueError(
+                            f"Either 'data' or 'loc' must be provided for rotation type {rot_id}."
+                        )
+                    x, y = data[:, 0], data[:, 1]
+                    if self.fitting_method == 'interpolation':
+                        fitf = interp1d(x,
+                                        y,
+                                        kind='cubic',
+                                        fill_value="extrapolate")
+                    elif self.fitting_method == 'cosine':
+                        p = np.polynomial.polynomial.polyfit(
+                            np.cos(np.deg2rad(x)), y, self.param_n)
+                        fitf = (lambda p_val: lambda z: np.polynomial.polynomial.
+                                polyval(np.cos(np.deg2rad(z)), p_val))(p)
+                    elif self.fitting_method == 'fourier':
+                        rad = np.deg2rad(x)
+                        a = np.column_stack([np.cos(n * rad) for n in range(self.param_n + 1)])
+                        coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
+                        fitf = (lambda c, ord_val:
+                                lambda z: np.sum([
+                                    c[n] * np.cos(n * np.deg2rad(z))
+                                    for n in range(ord_val + 1)
+                                ], axis=0))(coeffs, self.param_n)
                 norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval),
                                    0,
                                    360,
@@ -1269,13 +1284,11 @@ def compare_persistence_results(models: List[PolymerPersistence],
 #     rotation = np.array([0, 0, 0, 1, 0, 2, 0, 1])
 #     labels = {
 #         1: {
-#             'loc':
-#             r'E:\huangjy\script\persistence_length\adma.201702115\IID-FT.txt',
+#             'loc': 'IID-FT.txt',
 #             'color': 'b'
 #         },
 #         2: {
-#             'loc':
-#             r'E:\huangjy\script\persistence_length\adma.201702115\FT-FT.txt',
+#             'loc': 'FT-FT.txt',
 #             'color': 'm'
 #         },
 
@@ -1283,78 +1296,8 @@ def compare_persistence_results(models: List[PolymerPersistence],
 
 #     ris = np.array([0, 3, 0, 0, 0, 0, 0, 0])
 #     ris_label = {
-#         3: {'loc': r'E:\huangjy\script\persistence_length\adma.201702115\IID-RIS.txt', 'color': 'c'},
-#         # 2: {'label': 'T-RIS', 'color': 'm'},
+#         3: {'loc': 'EIID-RIS.txt', 'color': 'c'},
 #         }
 
 #     a = PolymerPersistence(l, Angle, rotation_types=rotation, rotation_labels=labels, ris_types=ris, ris_labels=ris_label)
 #     a.report()
-# if __name__ == '__main__':
-#     # --- Define the molecular chain structure ---
-#     # T-bond-DPP-bond-T-bond-T-bond-E-bond-T-bond
-#     l = [
-#         2.533, 1.432, 3.533, 1.432, 2.533, 1.432, 2.533, 1.433, 1.363, 1.433,
-#         2.533, 1.432
-#     ]
-#     Angle = [
-#         -14.92, -10.83, 30.79, -30.79, 10.83, 14.92, -14.91, -13.29, -53.16,
-#         53.16, 13.29, 14.91
-#     ]
-
-#     # Mapping to data files: 1 -> T-DPP.txt, 2 -> T-T.txt, 3 -> T-E.txt, 0 -> Fixed
-#     rotation = [0, 1, 0, 1, 0, 2, 0, 3, 0, 3, 0, 2]
-#     data = {
-#         1: {
-#             'loc':
-#             r'E:\huangjy\script\persistence_length\template_transfer_matrix\T-DPP.txt',
-#             'color': 'b'
-#         },
-#         2: {
-#             'loc':
-#             r'E:\huangjy\script\persistence_length\template_transfer_matrix\T-T.txt',
-#             'color': 'm'
-#         },
-#         3: {
-#             'loc':
-#             r'E:\huangjy\script\persistence_length\template_transfer_matrix\T-E.txt',
-#             'color': 'c'
-#         },
-#     }
-#     # Set temperature
-#     temperature = 300  # K
-
-#     # --- Create an instance and run the calculation ---
-#     # 1. Initialize the model with your polymer's data
-#     polymer_model = PolymerPersistence(
-#         bond_lengths=l,
-#         bond_angles_deg=Angle,
-#         temperature=temperature,
-#         rotation_types=rotation,
-#         rotation_labels=data,
-#     )
-
-#     # 2. Access the results. The calculation is run automatically the first time a result is requested.
-#     lp_repeats = polymer_model.persistence_length_repeats
-
-#     # 3. Print a formatted report
-#     polymer_model.report()
-#     polymer_model.compute_mean_square_end_to_end(N=20)
-#     polymer_model.plot_dihedral_potentials()
-
-#     temperatures = np.linspace(300, 700, 9)
-#     N_p = [
-#         PolymerPersistence(
-#             bond_lengths=l,
-#             bond_angles_deg=Angle,
-#             rotation_types=rotation,
-#             temperature=t,
-#             rotation_labels=data,
-#         ).persistence_length_repeats for t in temperatures
-#     ]
-
-#     all_np = [
-#         f"{num:.5f} (Temperature = {t:.1f} K)"
-#         for num, t in zip(np.array(N_p), temperatures)
-#     ]
-#     print("Persistence Length in Repeats:", )
-#     print("\n".join(all_np))

@@ -172,7 +172,10 @@ class PolymerPersistenceDependentDihedral:
         """Sets up interpolation functions for independent dihedrals."""
         for rot_id, info in self.rotation_labels.items():
             try:
-                if 'data' in info:
+                if 'fitf' in info:
+                    self._computational_data[rot_id] = {'fitf': info['fitf'], **info}
+                    continue
+                elif 'data' in info:
                     data = self._update_dihedral(info['data'])
                 elif 'loc' in info:
                     data = self._read_data(Path(info['loc']))
