@@ -67,7 +67,7 @@ class PolymerPersistence:
         self.rotation_labels = rotation_labels
         for rot_id in self.rotation_labels:
             rot = self.rotation_labels[rot_id]
-            if 'data' in rot and 'label' not in rot:
+            if 'data' in rot or 'fitf' in rot and 'label' not in rot:
                 self.rotation_labels[rot_id]['label'] = f"dihedral {rot_id}"
             if 'loc' in rot and 'label' not in rot:
                 file_path = self.rotation_labels[rot_id]['loc']
@@ -557,7 +557,7 @@ class PolymerPersistence:
                                                           0]]), segments)),
                          axis=0)
 
-    def pre_generate_angles_independent(self, n_samples, flat_rotation):
+    def pre_generate_angles(self, n_samples, flat_rotation):
         """Original independent sampling method."""
         self._prepare_full_data()
         num_positions = len(flat_rotation)
@@ -572,76 +572,6 @@ class PolymerPersistence:
                 angles_per_position[:, mask] = inv_cdf(rand_vals[:, mask])
 
         return angles_per_position
-
-    def pre_generate_angles_stratified(self,
-                                       n_samples,
-                                       flat_rotation,
-                                       n_strata=20):
-        """
-        Stratified sampling to reduce variance.
-        Better for flexible systems with high noise.
-        
-        Args:
-            n_samples: Number of samples to generate
-            flat_rotation: Rotation type array
-            n_strata: Number of strata to divide each angle range
-        """
-        self._prepare_full_data()
-        num_positions = len(flat_rotation)
-        rng = np.random.default_rng()
-
-        angles_per_position = np.zeros((n_samples, num_positions))
-
-        for rot_type, data_type in self._full_data.items():
-            mask = flat_rotation == rot_type
-            if np.any(mask):
-                inv_cdf = data_type['inv_cdf']
-                n_positions = np.sum(mask)
-
-                # Stratified sampling for each position
-                for pos_idx in np.where(mask)[0]:
-                    # Divide [0,1] into n_strata equal parts
-                    samples_per_stratum = n_samples // n_strata
-                    remainder = n_samples % n_strata
-
-                    stratified_samples = []
-                    for stratum in range(n_strata):
-                        lower = stratum / n_strata
-                        upper = (stratum + 1) / n_strata
-                        n_in_stratum = samples_per_stratum + (
-                            1 if stratum < remainder else 0)
-
-                        # Sample uniformly within this stratum
-                        uniform_samples = rng.random(n_in_stratum) * (
-                            upper - lower) + lower
-                        stratified_samples.extend(uniform_samples)
-
-                    angles_per_position[:, pos_idx] = inv_cdf(
-                        np.array(stratified_samples))
-
-        return angles_per_position
-
-    def pre_generate_angles(self,
-                            n_samples,
-                            flat_rotation,
-                            method='independent',
-                            **kwargs):
-        """
-        Generate dihedral angles using the specified sampling method.
-        
-        Args:
-            n_samples: Number of samples to generate
-            flat_rotation: Rotation type array
-            **kwargs: Additional parameters for specific sampling methods
-        """
-        if method == 'independent':
-            return self.pre_generate_angles_independent(
-                n_samples, flat_rotation)
-        elif method == 'stratified':
-            return self.pre_generate_angles_stratified(n_samples,
-                                                       flat_rotation, **kwargs)
-        else:
-            raise ValueError(f"Unknown sampling method: {method}")
 
     def calculate_persistence_length_mc(self,
                                         n_repeat_units=20,
@@ -684,9 +614,7 @@ class PolymerPersistence:
 
         # Pre-generate all angles
         all_angles = self.pre_generate_angles(n_samples,
-                                              flat_rotation,
-                                              method=method,
-                                              **sampling_kwargs)
+                                              flat_rotation)
 
         print(f"Calculating {n_samples} samples...")
         print(f"Using {psutil.cpu_count(logical=False)} CPU cores")
@@ -744,8 +672,7 @@ class PolymerPersistence:
         ])[:-1].astype(np.int64)
 
         all_angles = self.pre_generate_angles(n_samples,
-                                              flat_rotation,
-                                              method="independent")
+                                              flat_rotation)
         c = np.zeros((n_repeat_units, n_repeat_units))
         unit_idx = np.arange(0, n_repeat_units * length + 1, length)
         for i in range(n_samples):
@@ -824,9 +751,7 @@ class PolymerPersistence:
 
             # Pre-generate all angles
             all_angles = self.pre_generate_angles(n_samples,
-                                                  flat_rotation,
-                                                  method=method,
-                                                  **sampling_kwargs)
+                                                  flat_rotation)
 
             # Parallel computation using Cython optimized version
             batch_size = 1000

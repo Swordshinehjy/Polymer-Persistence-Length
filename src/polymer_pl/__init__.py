@@ -14,4 +14,4 @@ from .relaxed_dihedral_scan import (GaussianLogParser,
                                     XYZDeflectionAngleCalculator)
 from .backbone import PolymerBackbone
 
-__version__ = '0.9.24'
+__version__ = '0.9.25'
