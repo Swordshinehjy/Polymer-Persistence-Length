@@ -15,4 +15,4 @@ from .relaxed_dihedral_scan import (GaussianLogParser,
 from .backbone import PolymerBackbone
 from .model_confined import PolymerPersistenceConfined
 
-__version__ = '0.9.26'
+__version__ = '0.9.27'

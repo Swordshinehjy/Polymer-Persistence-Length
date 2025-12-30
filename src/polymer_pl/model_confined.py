@@ -239,27 +239,31 @@ class PolymerPersistenceConfined:
                         'confined': confined_ranges,
                         **info
                     }
-                    all_probs = []
+
+                    def exp_energy(phi):
+                        return np.exp(-fitf(phi) / self.kTval)
+
+                    Z_total = 0
                     for lo, hi in confined_ranges:
-                        mask = (x_values >= lo) & (x_values <= hi)
-                        if np.any(mask):
-                            x_subrange = x_values[mask]
+                        Z_i, _ = quad(exp_energy, lo, hi, limit=1000)
+                        Z_total += Z_i
 
-                            def exp_energy(phi):
-                                return np.exp(-fitf(phi) / self.kTval)
-
-                            Z, _ = quad(exp_energy, lo, hi, limit=1000)
-                            if Z > 0:
+                    all_probs = []
+                    if Z_total > 0:
+                        for lo, hi in confined_ranges:
+                            mask = (x_values >= lo) & (x_values <= hi)
+                            if np.any(mask):
+                                x_subrange = x_values[mask]
                                 probs = np.exp(
-                                    -fitf(x_subrange) / self.kTval) / Z
+                                    -fitf(x_subrange) / self.kTval) / Z_total
                                 all_probs.extend(list(zip(x_subrange, probs)))
+
                     if all_probs:
                         all_probs = np.array(all_probs)
                         all_probs = all_probs[np.argsort(all_probs[:, 0])]
                         full_data['prob_data'] = all_probs
                     else:
                         full_data['prob_data'] = np.empty((0, 2))
-
                 else:
                     x_values = np.linspace(0, 360, 1000)
                     norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval),
@@ -594,34 +598,29 @@ class PolymerPersistenceConfined:
         for key, data in self._full_data.items():
             if 'confined' in data:
                 confined_ranges = self._normalize_confined(data['confined'])
+                if 'prob_data' in data and len(data['prob_data']) > 0:
+                    prob_data = data['prob_data']
                 for lo, hi in confined_ranges:
-                    x_range = np.linspace(lo, hi, 200)
+                    mask = (prob_data[:, 0] >= lo) & (prob_data[:, 0] <= hi)
+                    if np.any(mask):
+                        segment_data = prob_data[mask]
+                        label = f"{data['label']} confined" if lo == confined_ranges[
+                            0][0] else ""
 
-                    def exp_energy(phi):
-                        return np.exp(-data['fitf'](phi) / self.kTval)
-
-                    Z, _ = quad(exp_energy, lo, hi, limit=1000)
-
-                    if Z > 0:
-                        prob_vals = np.exp(
-                            -data['fitf'](x_range) / self.kTval) / Z
-
-                        plt.plot(
-                            x_range,
-                            prob_vals,
-                            color=f"{data['color']}",
-                            linestyle="-",
-                            linewidth=2,
-                            label=f"{data['label']} confined"
-                            if lo == confined_ranges[0][0] else "")
-                        plt.axvline(lo,
-                                    color=data['color'],
-                                    linestyle='--',
-                                    alpha=0.5)
-                        plt.axvline(hi,
-                                    color=data['color'],
-                                    linestyle='--',
-                                    alpha=0.5)
+                        plt.plot(segment_data[:, 0],
+                                 segment_data[:, 1],
+                                 color=f"{data['color']}",
+                                 linestyle="-",
+                                 linewidth=2,
+                                 label=label)
+                    plt.axvline(lo,
+                                color=data['color'],
+                                linestyle='--',
+                                alpha=0.5)
+                    plt.axvline(hi,
+                                color=data['color'],
+                                linestyle='--',
+                                alpha=0.5)
             else:
                 plt.plot(data['x_values'],
                          data['prob_vals'],
