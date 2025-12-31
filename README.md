@@ -13,21 +13,21 @@ $$
 
 where $p_i(\phi)=\dfrac{e^{-V_i(\phi)/k_B T}}{Z_i}$, $Z_i=\int_0^{2\pi}e^{-V_i(\phi)/k_B T} d\phi$.
 
-Since $R_y(\theta_i)$ is independent of $\phi$, the above equation can be written as:
+Since $R_z(\theta_i)$ is independent of $\phi$, the above equation can be written as:
 
 $$
-A_i = \bigg(\int_0^{2\pi} R_z(\phi)p_i(\phi)d\phi\bigg)R_y(\theta_i) \equiv S_i R_y(\theta_i),
+A_i = \bigg(\int_0^{2\pi} R_x(\phi)p_i(\phi)d\phi\bigg)R_z(\theta_i) \equiv S_i R_z(\theta_i),
 $$
 
 and
 
 $$
-\int_0^{2\pi} R_z(\phi)p(\phi)d\phi =
+\int_0^{2\pi} R_x(\phi)p(\phi)d\phi =
 \begin{pmatrix}
-\langle\cos\phi\rangle & -\langle\sin\phi\rangle & 0 \\
-\langle\sin\phi\rangle & \langle\cos\phi\rangle & 0 \\
-0 & 0 & 1
-\end{pmatrix}
+1 & 0 & 0\\
+0 & \langle\cos\phi\rangle & -\langle\sin\phi\rangle\\
+0 & \langle\sin\phi\rangle & \langle\cos\phi\rangle\\
+\end{pmatrix},
 $$
 
 where
