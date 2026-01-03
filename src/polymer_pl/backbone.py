@@ -1,12 +1,5 @@
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
-import psutil
-import scipy.constants as sc
-from numpy.linalg import eigvals
-from scipy.integrate import cumulative_trapezoid, quad
-from scipy.interpolate import interp1d
 from typing import List, Tuple, Union
 from scipy.spatial import ConvexHull
 

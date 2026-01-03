@@ -8,7 +8,6 @@ from numpy.linalg import eigvals
 from scipy.integrate import quad
 from scipy.interpolate import interp1d
 
-# Import the Cython module (after compilation)
 try:
     from . import chain_rotation
 except ImportError:

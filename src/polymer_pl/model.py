@@ -10,7 +10,7 @@ from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from scipy.linalg import fractional_matrix_power
 from typing import List, Tuple, Union
-# Import the Cython module (after compilation)
+
 try:
     from . import chain_rotation
 except ImportError:
@@ -543,18 +543,16 @@ class PolymerPersistence:
         bonds = self.bond_lengths if self.bond_lengths is not None else np.array(
             [1.0] * len(self.bond_angles_rad))
         l_array = np.tile(bonds, n_repeat_units)
-        all_l = np.vstack((l_array, np.zeros((2, l_array.shape[0])))).T
+        vectors = np.hstack((l_array[:, None], np.zeros((l_array.shape[0], 2))))
         all_angle = np.tile(self.bond_angles_rad, n_repeat_units)
-        angles = np.cumsum(all_angle[1:])
-        vectors = all_l[1:]
+        angles = np.cumsum(all_angle)
         cos_angles = np.cos(angles)
         sin_angles = np.sin(angles)
         rotated_x = vectors[:, 0] * cos_angles - vectors[:, 1] * sin_angles
         rotated_y = vectors[:, 0] * sin_angles + vectors[:, 1] * cos_angles
         rotated_z = vectors[:, 2]
         segments = np.column_stack((rotated_x, rotated_y, rotated_z))
-        return np.cumsum(np.vstack((np.array([[0, 0, 0], [bonds[0], 0,
-                                                          0]]), segments)),
+        return np.cumsum(np.vstack((np.array([[0, 0, 0]]), segments)),
                          axis=0)
 
     def pre_generate_angles(self, n_samples, flat_rotation):
@@ -575,9 +573,7 @@ class PolymerPersistence:
 
     def calculate_persistence_length_mc(self,
                                         n_repeat_units=20,
-                                        n_samples=150000,
-                                        method='independent',
-                                        **sampling_kwargs):
+                                        n_samples=150000):
         """
         Calculate persistence length using Monte Carlo sampling.
         
@@ -711,9 +707,7 @@ class PolymerPersistence:
                                   n_samples=150000,
                                   start_idx=1,
                                   end_idx=10,
-                                  method='independent',
-                                  return_data=False,
-                                  **sampling_kwargs):
+                                  return_data=False):
         """
         Plot the correlation function and its exponential fit.
         
