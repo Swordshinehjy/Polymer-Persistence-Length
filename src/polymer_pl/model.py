@@ -126,7 +126,10 @@ class PolymerPersistence:
         for rot_id, info in self.rotation_labels.items():
             try:
                 if 'fitf' in info:
-                    self._computational_data[rot_id] = {'fitf': info['fitf'], **info}
+                    self._computational_data[rot_id] = {
+                        'fitf': info['fitf'],
+                        **info
+                    }
                     continue
                 elif 'data' in info:
                     data = self._update_dihedral(info['data'])
@@ -149,13 +152,17 @@ class PolymerPersistence:
                             polyval(np.cos(np.deg2rad(z)), p_val))(p)
                 elif self.fitting_method == 'fourier':
                     rad = np.deg2rad(x)
-                    a = np.column_stack([np.cos(n * rad) for n in range(self.param_n + 1)])
+                    a = np.column_stack(
+                        [np.cos(n * rad) for n in range(self.param_n + 1)])
                     coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
-                    fitf = (lambda c, ord_val:
-                            lambda z: np.sum([
-                                c[n] * np.cos(n * np.deg2rad(z))
-                                for n in range(ord_val + 1)
-                            ], axis=0))(coeffs, self.param_n)
+                    fitf = (
+                        lambda c, ord_val: lambda z: np.sum([
+                            c[n] * np.cos(n * np.deg2rad(z))
+                            for n in range(ord_val + 1)
+                        ],
+                                                            axis=0))(
+                                                                coeffs,
+                                                                self.param_n)
                 self._computational_data[rot_id] = {'fitf': fitf, **info}
             except FileNotFoundError:
                 print(
@@ -190,17 +197,20 @@ class PolymerPersistence:
                     elif self.fitting_method == 'cosine':
                         p = np.polynomial.polynomial.polyfit(
                             np.cos(np.deg2rad(x)), y, self.param_n)
-                        fitf = (lambda p_val: lambda z: np.polynomial.polynomial.
-                                polyval(np.cos(np.deg2rad(z)), p_val))(p)
+                        fitf = (
+                            lambda p_val: lambda z: np.polynomial.polynomial.
+                            polyval(np.cos(np.deg2rad(z)), p_val))(p)
                     elif self.fitting_method == 'fourier':
                         rad = np.deg2rad(x)
-                        a = np.column_stack([np.cos(n * rad) for n in range(self.param_n + 1)])
+                        a = np.column_stack(
+                            [np.cos(n * rad) for n in range(self.param_n + 1)])
                         coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
-                        fitf = (lambda c, ord_val:
-                                lambda z: np.sum([
-                                    c[n] * np.cos(n * np.deg2rad(z))
-                                    for n in range(ord_val + 1)
-                                ], axis=0))(coeffs, self.param_n)
+                        fitf = (lambda c, ord_val: lambda z: np.sum([
+                            c[n] * np.cos(n * np.deg2rad(z))
+                            for n in range(ord_val + 1)
+                        ],
+                                                                    axis=0)
+                                )(coeffs, self.param_n)
                 norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval),
                                    0,
                                    360,
@@ -397,81 +407,6 @@ class PolymerPersistence:
             self._calculate_Mmat()
         return self._Mmat
 
-    def compute_mean_square_end_to_end(self, N):
-        """Computes the mean square end-to-end distance for a given number of repeat units."""
-        if self.bond_lengths is None:
-            raise RuntimeError("Bond lengths not set.")
-        if self._lp_in_repeats is None:
-            self.run_calculation()
-        L_repeat = np.sum(self.bond_lengths)
-        if self._lp_in_repeats == np.inf:
-            L = N * L_repeat
-            return L**2
-        else:
-            return 2 * self._lp_in_repeats * N * L_repeat**2 * (
-                1 - self._lp_in_repeats / N *
-                (1 - np.exp(-N / self._lp_in_repeats)))
-
-    def compute_mean_square_Rg(self, N):
-        """Computes the mean square radius of gyration for a given number of repeat units."""
-        if self.bond_lengths is None:
-            raise RuntimeError("Bond lengths not set.")
-        if self._lp_in_repeats is None:
-            self.run_calculation()
-        L_repeat = np.sum(self.bond_lengths)
-        if self._lp_in_repeats == np.inf:
-            raise RuntimeError(
-                "Infinite persistence length not supported for Rg calculation."
-            )
-        else:
-            L_square = L_repeat**2
-            Np = self._lp_in_repeats
-            rg2 = L_square * (Np * N / 3 - Np**2 + 2 * Np**3 / N -
-                              2 * Np**4 / N**2 * (1 - np.exp(-N / Np)))
-            return rg2
-
-    def plot_end_to_end_distance(self, N=20):
-        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
-
-        Args:
-            N (int): Maximum number of repeat units to plot
-        """
-        # Generate array of N values
-        N_values = np.arange(1, N + 1)
-
-        # Calculate mean square end-to-end distance for each N
-        msd_values = [self.compute_mean_square_end_to_end(n) for n in N_values]
-
-        # Create the plot
-        plt.figure(figsize=(6, 5))
-        plt.plot(N_values, msd_values, linewidth=2, color='blue', marker='o')
-
-        # Format the plot
-        self.format_subplot("Number of Repeat Units (N)",
-                            "Mean Square End-to-End Distance (Å²)",
-                            "<R²> vs. Number of Repeat Units")
-
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.show()
-
-    def plot_mean_square_radius_of_gyration(self, N=20):
-        """Plots the mean square radius of gyration as a function of repeat units from 1 to N.
-
-        Args:
-            N (int): Maximum number of repeat units to plot
-        """
-        N_values = np.arange(1, N + 1)
-        msd_values = [self.compute_mean_square_Rg(n) for n in N_values]
-        plt.figure(figsize=(6, 5))
-        plt.plot(N_values, msd_values, linewidth=2, color='blue', marker='o')
-
-        self.format_subplot("Number of Repeat Units (N)", "<Rg²> (Å²)",
-                            "<Rg²> vs. Number of Repeat Units")
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.show()
-
     def format_subplot(self, xlabel, ylabel, title):
         """Format subplot with consistent styling."""
         plt.xlabel(xlabel, fontsize=16, fontfamily="Helvetica")
@@ -543,7 +478,8 @@ class PolymerPersistence:
         bonds = self.bond_lengths if self.bond_lengths is not None else np.array(
             [1.0] * len(self.bond_angles_rad))
         l_array = np.tile(bonds, n_repeat_units)
-        vectors = np.hstack((l_array[:, None], np.zeros((l_array.shape[0], 2))))
+        vectors = np.hstack((l_array[:, None], np.zeros(
+            (l_array.shape[0], 2))))
         all_angle = np.tile(self.bond_angles_rad, n_repeat_units)
         angles = np.cumsum(all_angle)
         cos_angles = np.cos(angles)
@@ -552,8 +488,7 @@ class PolymerPersistence:
         rotated_y = vectors[:, 0] * sin_angles + vectors[:, 1] * cos_angles
         rotated_z = vectors[:, 2]
         segments = np.column_stack((rotated_x, rotated_y, rotated_z))
-        return np.cumsum(np.vstack((np.array([[0, 0, 0]]), segments)),
-                         axis=0)
+        return np.cumsum(np.vstack((np.array([[0, 0, 0]]), segments)), axis=0)
 
     def pre_generate_angles(self, n_samples, flat_rotation):
         """Original independent sampling method."""
@@ -570,6 +505,50 @@ class PolymerPersistence:
                 angles_per_position[:, mask] = inv_cdf(rand_vals[:, mask])
 
         return angles_per_position
+
+    def calc_mean_square_end_to_end_distance(self,
+                                             n_repeat_units=20,
+                                             n_samples=150000,
+                                             return_data=False):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+            N (int): Maximum number of repeat units to plot
+            return_data (bool): If True, returns the mean square end-to-end distance values as a list
+        """
+        if self.bond_lengths is None or chain_rotation is None:
+            raise ValueError("Bond lengths and chain_rotation must be set.")
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        length = len(self.bond_angles_rad)
+        ch = self.generate_chain(n_repeat_units)
+        batch_size = 1000
+        n_batches = n_samples // batch_size
+        n_jobs = psutil.cpu_count(logical=False)
+        flat_rotation = np.concatenate([
+            [0], self.rotation_types[np.arange(len(ch) - 1) % length]
+        ])[:-1].astype(np.int64)
+
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+        r2List = Parallel(n_jobs=n_jobs, verbose=1)(
+            delayed(chain_rotation.batch_r2_cython)(
+                np.ascontiguousarray(ch, dtype=np.float64),
+                np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
+                                                batch_size],
+                                     dtype=np.float64),
+                np.ascontiguousarray(flat_rotation, dtype=np.int64), length)
+            for i in range(n_batches))
+        r2List = np.vstack(r2List)
+        msd_values = np.mean(r2List, axis=0)
+
+        plt.figure(figsize=(6, 5))
+        plt.plot(n_repeats, msd_values, linewidth=2, color='blue', marker='o')
+        self.format_subplot("Number of Repeat Units (N)",
+                            "Mean Square End-to-End Distance (Å²)",
+                            "<R²> vs. Number of Repeat Units")
+        plt.tight_layout()
+        plt.show()
+
+        if return_data:
+            return msd_values
 
     def calculate_persistence_length_mc(self,
                                         n_repeat_units=20,
@@ -609,8 +588,7 @@ class PolymerPersistence:
         ])[:-1].astype(np.int64)
 
         # Pre-generate all angles
-        all_angles = self.pre_generate_angles(n_samples,
-                                              flat_rotation)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
 
         print(f"Calculating {n_samples} samples...")
         print(f"Using {psutil.cpu_count(logical=False)} CPU cores")
@@ -667,8 +645,7 @@ class PolymerPersistence:
             [0], self.rotation_types[np.arange(len(ch) - 1) % length]
         ])[:-1].astype(np.int64)
 
-        all_angles = self.pre_generate_angles(n_samples,
-                                              flat_rotation)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
         c = np.zeros((n_repeat_units, n_repeat_units))
         unit_idx = np.arange(0, n_repeat_units * length + 1, length)
         for i in range(n_samples):
@@ -744,8 +721,7 @@ class PolymerPersistence:
             ])[:-1].astype(np.int64)
 
             # Pre-generate all angles
-            all_angles = self.pre_generate_angles(n_samples,
-                                                  flat_rotation)
+            all_angles = self.pre_generate_angles(n_samples, flat_rotation)
 
             # Parallel computation using Cython optimized version
             batch_size = 1000

@@ -321,6 +321,13 @@ class PolymerPersistenceFK:
         norms = np.linalg.norm(vectors, axis=2) * np.linalg.norm(v_ref, axis=2)
         return np.clip(dots / norms, -1, 1)
 
+    @staticmethod
+    def mean_square_end_to_end(pts, length):
+        k_values = np.arange(0, pts.shape[1], length)
+        vectors = pts[:, k_values, :] - pts[:, 0:1, :]
+        square_norms = np.sum(vectors**2, axis=2)
+        return np.mean(square_norms, axis=0)
+
     def plot_correlation_function(self,
                                   n_repeat_units=20,
                                   n_samples=150000,
@@ -462,3 +469,48 @@ class PolymerPersistenceFK:
                 linewidth=2)
         ax.set_aspect('equal', adjustable='box')
         plt.show()
+
+    def calc_mean_square_end_to_end_distance(self,
+                                             n_repeat_units=20,
+                                             n_samples=150000,
+                                             return_data=False,
+                                             plot=False,
+                                             use_cython=True):
+        """Plot correlation function using FK method."""
+        if chain_fk is None:
+            print("Warning: chain_rotation_fk Cython module not available.")
+            use_cython = False
+
+        n_bonds_per_unit = len(self.bond_angles_rad)
+        n_total_bonds = n_bonds_per_unit * n_repeat_units
+
+        all_angles = self.pre_generate_angles(n_samples, n_total_bonds)
+        if use_cython:
+            batch_size = 1000
+            n_batches = n_samples // batch_size
+            n_jobs = psutil.cpu_count(logical=False)
+
+            r2_results = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(chain_fk.batch_end_to_end)
+                (np.ascontiguousarray(self.bond_lengths, dtype=np.float64),
+                 np.ascontiguousarray(self.bond_angles_rad, dtype=np.float64),
+                 np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
+                                                 batch_size],
+                                      dtype=np.float64), n_repeat_units)
+                for i in range(n_batches))
+
+            r2_results = np.vstack(r2_results)
+            r2 = np.mean(r2_results, axis=0)
+        else:
+            all_chains = self.build_all_chains_no_cython(
+                n_samples, n_repeat_units, all_angles)
+            r2 = self.mean_square_end_to_end(all_chains, n_bonds_per_unit)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(np.arange(n_repeat_units + 1), r2, 'bo-')
+            self.format_subplot("Number of Repeat Units (N)",
+                                "Mean Square End-to-End Distance (Å²)",
+                                "<R²> vs. Number of Repeat Units")
+            plt.show()
+        if return_data:
+            return r2

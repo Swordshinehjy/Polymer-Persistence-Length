@@ -268,3 +268,38 @@ def build_full_chain_fk(const double[:] bond_lengths,
         pos_view[bond_idx + 1, 2] = current_pos[2]
     
     return positions
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def batch_end_to_end(const double[:] bond_lengths,
+                     const double[:] bond_angles_rad,
+                     const double[:, :] all_dihedral_angles,
+                     int n_repeat_units):
+    
+    cdef int n_samples = all_dihedral_angles.shape[0]
+    cdef int n_bonds_per_unit = bond_lengths.shape[0]
+    cdef int n_corr = n_repeat_units + 1
+
+    cdef cnp.ndarray[double, ndim=2] results = np.empty((n_samples, n_corr), dtype=np.float64)
+    cdef double[:, :] results_view = results
+
+    cdef int i, j, idx
+    cdef double dx, dy, dz
+
+    cdef double[:, :] vecs
+    
+    for i in range(n_samples):
+        vecs = build_full_chain_fk(
+            bond_lengths, 
+            bond_angles_rad, 
+            all_dihedral_angles[i, :], 
+            n_repeat_units
+        )
+        for j in range(n_corr):
+            idx = j * n_bonds_per_unit
+            dx = vecs[idx, 0]
+            dy = vecs[idx, 1]
+            dz = vecs[idx, 2]
+            results_view[i, j] = dx*dx + dy*dy + dz*dz
+    
+    return results
