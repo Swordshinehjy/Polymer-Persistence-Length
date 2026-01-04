@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.constants as sc
@@ -505,7 +504,7 @@ class PolymerPersistenceDependentDefelection:
     def plot_deflection_angles(self):
         original = self._read_data(Path(self.bond_angle_file))
         fit_angle = self._fit_deflection(Path(self.bond_angle_file))
-        colors = cm.get_cmap('tab20')
+        colors = plt.get_cmap('tab20')
         x = np.linspace(0, 360, 721)
         for i in range(len(fit_angle)):
             fitf = fit_angle[i]

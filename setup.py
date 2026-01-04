@@ -7,6 +7,11 @@ extensions = [
         "polymer_pl.chain_rotation",
         ["src/polymer_pl/chain_rotation.pyx"],
         include_dirs=[np.get_include()],
+    ),
+    Extension(
+        "polymer_pl.chain_rotation_fk",
+        ["src/polymer_pl/chain_rotation_fk.pyx"],
+        include_dirs=[np.get_include()],
     )
 ]
 

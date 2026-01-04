@@ -9,6 +9,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polymer_pl"
-version = "0.9.27"
+version = "0.10.1"
 requires-python = ">=3.10"
 dependencies = ["numpy", "scipy", "matplotlib", "psutil", "joblib", "pandas"]

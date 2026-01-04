@@ -2,21 +2,10 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import psutil
 import scipy.constants as sc
-from joblib import Parallel, delayed
 from numpy.linalg import eigvals
-from scipy.integrate import cumulative_trapezoid, quad
+from scipy.integrate import quad
 from scipy.interpolate import interp1d
-from typing import List, Tuple, Union
-
-try:
-    from . import chain_rotation
-except ImportError:
-    print(
-        "Warning: chain_rotation module not found. Cython functions will not be available."
-    )
-    chain_rotation = None
 
 
 class PolymerPersistenceConfined:
@@ -46,7 +35,7 @@ class PolymerPersistenceConfined:
             bond_lengths (list or np.ndarray): The lengths of the bonds in the repeat unit.
             bond_angles_deg (list or np.ndarray): The deflection angles between bonds in degrees.
             temperature (int, optional): The temperature in Kelvin. Defaults to 300.
-            rotaion_types (list or np.ndarray, optional): An array of integers mapping each bond to a
+            rotation_types (list or np.ndarray, optional): An array of integers mapping each bond to a
                                                  specific rotational potential profile. A value of 0
                                                  indicates a fixed bond with no rotation.
             rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
@@ -367,7 +356,7 @@ class PolymerPersistenceConfined:
             rot_id = int(self.rotation_types[i])
             ris_id = int(
                 self.ris_types[i]) if self.ris_types is not None else 0
-            theta = float(self.bond_angles_rad[i])
+            theta = self.bond_angles_rad[i]
 
             if rot_id == 0 and ris_id == 0:
                 m_i, s_i = 1.0, 0.0  # Fixed bond
