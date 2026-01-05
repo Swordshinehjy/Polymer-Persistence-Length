@@ -22,8 +22,7 @@ $$
 and
 
 $$
-\int_0^{2\pi} R_x(\phi)p(\phi)\,d\phi
-=
+\int_0^{2\pi} R_x(\phi)p(\phi)d\phi =
 \begin{pmatrix}
 1 & 0 & 0\\
 0 & \langle\cos\phi\rangle & -\langle\sin\phi\rangle\\
@@ -99,6 +98,7 @@ The `_calculate_Mmat` method constructs the overall transformation matrix M for 
 5. Multiplying all transformation matrices to obtain the overall transformation matrix Mmat
 
 The function uses caching to improve performance by storing computed integrals for repeated rotation types and RIS IDs.
+
 
 
 
