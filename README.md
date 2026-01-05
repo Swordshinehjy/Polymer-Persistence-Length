@@ -80,24 +80,6 @@ See the original paper [Predicting Chain Dimensions of Semiflexible Polymers fro
 *   Add the Monte Carlo sampling method using Cython
 *   Add the rotational isomeric state (RIS) model and the mixed HR-RIS model using the same logic
 
-## Implementation Details
-
-### `_calculate_Mmat` Function
-
-The `_calculate_Mmat` method constructs the overall transformation matrix M for the repeat unit by:
-
-1. Preparing computational data for rotation types and RIS (Rotational Isomeric State) models
-2. Iterating through each bond in the repeat unit (M bonds total)
-3. For each bond, determining the appropriate rotation model:
-   - Fixed bond (rot_id=0, ris_id=0): m_i=1.0, s_i=0.0
-   - Continuous rotation model (rot_id≠0): Uses fitted functions to compute rotation integrals
-   - RIS model (ris_id≠0): Uses discrete angles and energies to compute rotation integrals
-4. Constructing transformation matrices:
-   - Dihedral rotation matrix (R_x) around the x-axis with m_i and s_i parameters
-   - Bond angle deflection matrix (R_z) around the z-axis using bond angles
-5. Multiplying all transformation matrices to obtain the overall transformation matrix Mmat
-
-The function uses caching to improve performance by storing computed integrals for repeated rotation types and RIS IDs.
 
 
 
