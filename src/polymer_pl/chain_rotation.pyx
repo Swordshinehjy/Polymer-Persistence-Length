@@ -69,7 +69,7 @@ cdef void apply_rotation(double[:, :] pts, int start_idx, const double[:, :] rot
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def randomRotate_cython(const double[:, :] base_pts, const double[:] angles, const cnp.int64_t[:] flat_rotation):
+def randomRotate_cython(const double[:, :] base_pts, const double[:] angles):
     """Cythonized version of randomRotate_vectorized."""
     cdef int n_pts = base_pts.shape[0]
     cdef int n_angles = angles.shape[0]
@@ -82,7 +82,7 @@ def randomRotate_cython(const double[:, :] base_pts, const double[:] angles, con
     cdef double angle_rad
 
     for idx in range(n_angles):
-        if flat_rotation[idx] != 0:
+        if angles[idx] != 0:
             # Calculate axis vector
             vec[0] = pts_view[idx, 0] - pts_view[idx - 1, 0]
             vec[1] = pts_view[idx, 1] - pts_view[idx - 1, 1]
@@ -150,7 +150,7 @@ def cosVals_cython(const double[:, :] pts, int length):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def batch_cosVals_cython(const double[:, :] ch, const double[:, :] all_angles, 
-                        const cnp.int64_t[:] flat_rotation, int length):
+                        int length):
     """Process a batch of angle sets and compute cosine values."""
     cdef int n_samples = all_angles.shape[0]
     cdef int n_pts = ch.shape[0]
@@ -163,7 +163,7 @@ def batch_cosVals_cython(const double[:, :] ch, const double[:, :] all_angles,
     cdef cnp.ndarray[double, ndim=1] cos_vals
 
     for i in range(n_samples):
-        rotated_pts = randomRotate_cython(ch, all_angles[i, :], flat_rotation)
+        rotated_pts = randomRotate_cython(ch, all_angles[i, :])
         cos_vals = cosVals_cython(rotated_pts, length)
         for j in range(n_cos):
             results_view[i, j] = cos_vals[j]
@@ -173,7 +173,7 @@ def batch_cosVals_cython(const double[:, :] ch, const double[:, :] all_angles,
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def batch_r2_cython(const double[:, :] ch, const double[:, :] all_angles,
-                        const cnp.int64_t[:] flat_rotation, int length):
+                        int length):
     """Process a batch of angle sets and compute cosine values."""
     cdef int n_samples = all_angles.shape[0]
     cdef int n_pts = ch.shape[0]
@@ -186,7 +186,7 @@ def batch_r2_cython(const double[:, :] ch, const double[:, :] all_angles,
     cdef double dx, dy, dz
 
     for i in range(n_samples):
-        rotated_pts = randomRotate_cython(ch, all_angles[i, :], flat_rotation)
+        rotated_pts = randomRotate_cython(ch, all_angles[i, :])
         for j in range(n_r):
             idx = j * length
             dx = rotated_pts[idx, 0]

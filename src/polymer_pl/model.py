@@ -74,8 +74,28 @@ class PolymerPersistence:
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
         self.ris_labels = ris_labels
         self.ris_types = ris_types
+        # Initialize RIS data if needed
+        if self.ris_types is not None:
+            self.ris_types = np.array(self.ris_types)
+            if not hasattr(self, 'ris_data') or self.ris_data is None:
+                self.ris_data = {}
+                for ris_id, info in self.ris_labels.items():
+                    try:
+                        if 'data' in info:
+                            risdata = np.asarray(info['data'])
+                            angles, energies = risdata[:, 0], risdata[:, 1]
+                        elif 'loc' in info:
+                            angles, energies = self._read_ris_data(
+                                Path(info['loc']))
+                        self.ris_data[ris_id] = (angles, energies)
+                    except FileNotFoundError:
+                        print(
+                            f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
+                        )
+                        continue
         # --- Internal cache for lazy evaluation ---
         self._Mmat = None
+        self._A_list = None
         self._lambda_max = None
         self._lp_in_repeats = None
         self._computational_data = {}
@@ -279,26 +299,6 @@ class PolymerPersistence:
         """Constructs the overall transformation matrix M for the repeat unit."""
         self._prepare_computational_data()
 
-        # Initialize RIS data if needed
-        if self.ris_types is not None:
-            self.ris_types = np.array(self.ris_types)
-            if not hasattr(self, 'ris_data') or self.ris_data is None:
-                self.ris_data = {}
-                for ris_id, info in self.ris_labels.items():
-                    try:
-                        if 'data' in info:
-                            risdata = np.asarray(info['data'])
-                            angles, energies = risdata[:, 0], risdata[:, 1]
-                        elif 'loc' in info:
-                            angles, energies = self._read_ris_data(
-                                Path(info['loc']))
-                        self.ris_data[ris_id] = (angles, energies)
-                    except FileNotFoundError:
-                        print(
-                            f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
-                        )
-                        continue
-
         M = len(self.rotation_types)
         A_list = []
         integral_cache = {}
@@ -357,6 +357,7 @@ class PolymerPersistence:
         for A in A_list:
             Mmat = A @ Mmat
         self._Mmat = Mmat
+        self._A_list = A_list
 
     def run_calculation(self):
         """
@@ -490,7 +491,7 @@ class PolymerPersistence:
         segments = np.column_stack((rotated_x, rotated_y, rotated_z))
         return np.cumsum(np.vstack((np.array([[0, 0, 0]]), segments)), axis=0)
 
-    def pre_generate_angles(self, n_samples, flat_rotation):
+    def pre_generate_angles(self, n_samples, flat_rotation, flat_ris):
         """Original independent sampling method."""
         self._prepare_full_data()
         num_positions = len(flat_rotation)
@@ -504,6 +505,19 @@ class PolymerPersistence:
                 inv_cdf = data_type['inv_cdf']
                 angles_per_position[:, mask] = inv_cdf(rand_vals[:, mask])
 
+        if flat_ris is not None:
+            for ris_id, (ang_deg, energies) in self.ris_data.items():
+                mask = (flat_ris == ris_id)
+                if not np.any(mask):
+                    continue
+
+                boltz = np.exp(-energies / self.kTval)
+                prob = boltz / boltz.sum()
+
+                sampled = rng.choice(ang_deg,
+                                     size=(n_samples, np.sum(mask)),
+                                     p=prob)
+                angles_per_position[:, mask] = sampled
         return angles_per_position
 
     def calc_mean_square_end_to_end_distance(self,
@@ -526,15 +540,19 @@ class PolymerPersistence:
         flat_rotation = np.concatenate([
             [0], self.rotation_types[np.arange(len(ch) - 1) % length]
         ])[:-1].astype(np.int64)
-
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+        flat_ris = None
+        if self.ris_types is not None:
+            flat_ris = np.concatenate([
+                [0], self.ris_types[np.arange(len(ch) - 1) % length]
+            ])[:-1].astype(np.int64)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation,
+                                              flat_ris)
         r2List = Parallel(n_jobs=n_jobs, verbose=1)(
             delayed(chain_rotation.batch_r2_cython)(
                 np.ascontiguousarray(ch, dtype=np.float64),
                 np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
                                                 batch_size],
-                                     dtype=np.float64),
-                np.ascontiguousarray(flat_rotation, dtype=np.int64), length)
+                                     dtype=np.float64), length)
             for i in range(n_batches))
         r2List = np.vstack(r2List)
         msd_values = np.mean(r2List, axis=0)
@@ -586,9 +604,15 @@ class PolymerPersistence:
         flat_rotation = np.concatenate([
             [0], self.rotation_types[np.arange(len(ch) - 1) % length]
         ])[:-1].astype(np.int64)
+        flat_ris = None
+        if self.ris_types is not None:
+            flat_ris = np.concatenate([
+                [0], self.ris_types[np.arange(len(ch) - 1) % length]
+            ])[:-1].astype(np.int64)
 
         # Pre-generate all angles
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation,
+                                              flat_ris)
 
         print(f"Calculating {n_samples} samples...")
         print(f"Using {psutil.cpu_count(logical=False)} CPU cores")
@@ -630,8 +654,7 @@ class PolymerPersistence:
             raise ImportError("chain_rotation module not available")
         return chain_rotation.batch_cosVals_cython(
             np.ascontiguousarray(ch, dtype=np.float64),
-            np.ascontiguousarray(all_angles, dtype=np.float64),
-            np.ascontiguousarray(flat_rotation, dtype=np.int64), length)
+            np.ascontiguousarray(all_angles, dtype=np.float64), length)
 
     def calculate_contact_map_mc(
         self,
@@ -644,13 +667,18 @@ class PolymerPersistence:
         flat_rotation = np.concatenate([
             [0], self.rotation_types[np.arange(len(ch) - 1) % length]
         ])[:-1].astype(np.int64)
+        flat_ris = None
+        if self.ris_types is not None:
+            flat_ris = np.concatenate([
+                [0], self.ris_types[np.arange(len(ch) - 1) % length]
+            ])[:-1].astype(np.int64)
 
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation,
+                                              flat_ris)
         c = np.zeros((n_repeat_units, n_repeat_units))
         unit_idx = np.arange(0, n_repeat_units * length + 1, length)
         for i in range(n_samples):
-            pos = chain_rotation.randomRotate_cython(ch, all_angles[i],
-                                                     flat_rotation)
+            pos = chain_rotation.randomRotate_cython(ch, all_angles[i])
             r = pos[unit_idx]
             u = r[1:] - r[:-1]
             u /= np.linalg.norm(u, axis=1, keepdims=True)
@@ -719,9 +747,15 @@ class PolymerPersistence:
             flat_rotation = np.concatenate([
                 [0], self.rotation_types[np.arange(len(ch) - 1) % length]
             ])[:-1].astype(np.int64)
+            flat_ris = None
+            if self.ris_types is not None:
+                flat_ris = np.concatenate([
+                    [0], self.ris_types[np.arange(len(ch) - 1) % length]
+                ])[:-1].astype(np.int64)
 
             # Pre-generate all angles
-            all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+            all_angles = self.pre_generate_angles(n_samples, flat_rotation,
+                                                  flat_ris)
 
             # Parallel computation using Cython optimized version
             batch_size = 1000

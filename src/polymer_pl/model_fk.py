@@ -51,9 +51,25 @@ class PolymerPersistenceFK:
             if 'loc' in rot and 'label' not in rot:
                 file_path = self.rotation_labels[rot_id]['loc']
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
-
         self.ris_labels = ris_labels
         self.ris_types = ris_types
+        if self.ris_types is not None:
+            self.ris_types = np.array(self.ris_types)
+            self.ris_data = {}
+            for ris_id, info in self.ris_labels.items():
+                try:
+                    if 'data' in info:
+                        risdata = np.asarray(info['data'])
+                        angles, energies = risdata[:, 0], risdata[:, 1]
+                    elif 'loc' in info:
+                        angles, energies = self._read_ris_data(
+                            Path(info['loc']))
+                    self.ris_data[ris_id] = (angles, energies)
+                except FileNotFoundError:
+                    print(
+                        f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
+                    )
+                    continue
         self._full_data = {}
         self.fitting_method = fitting_method
         self.param_n = param_n
@@ -78,6 +94,14 @@ class PolymerPersistenceFK:
                 combined = np.vstack((combined, [360.0, energy0]))
                 combined = combined[np.argsort(combined[:, 0])]
             return combined
+
+    @staticmethod
+    def _read_ris_data(file_name: Path):
+        delimiter = ',' if file_name.suffix == '.csv' else None
+        data = np.loadtxt(file_name, delimiter=delimiter)
+        data = np.reshape(data, (-1, 2))
+        data = np.unique(data, axis=0)
+        return data[:, 0], data[:, 1]
 
     def _read_data(self, file_name: Path):
         """Read and process dihedral angle data from a file."""
@@ -236,6 +260,40 @@ class PolymerPersistenceFK:
             if np.any(mask):
                 inv_cdf = data_type['inv_cdf']
                 angles_deg[:, mask] = inv_cdf(rand_vals[:, mask])
+
+        if self.ris_types is not None:
+            flat_ris = np.tile(
+                self.ris_types, n_samples * n_total_bonds // n_bonds_per_unit +
+                1)[:n_total_bonds]
+            self.ris_types = np.array(self.ris_types)
+            if not hasattr(self, 'ris_data') or self.ris_data is None:
+                self.ris_data = {}
+                for ris_id, info in self.ris_labels.items():
+                    try:
+                        if 'data' in info:
+                            risdata = np.asarray(info['data'])
+                            angles, energies = risdata[:, 0], risdata[:, 1]
+                        elif 'loc' in info:
+                            angles, energies = self._read_ris_data(
+                                Path(info['loc']))
+                        self.ris_data[ris_id] = (angles, energies)
+                    except FileNotFoundError:
+                        print(
+                            f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
+                        )
+                        continue
+            for ris_id, (ang_deg, energies) in self.ris_data.items():
+                mask = (flat_ris == ris_id)
+                if not np.any(mask):
+                    continue
+
+                boltz = np.exp(-energies / self.kTval)
+                prob = boltz / boltz.sum()
+
+                sampled = rng.choice(ang_deg,
+                                     size=(n_samples, np.sum(mask)),
+                                     p=prob)
+                angles_deg[:, mask] = sampled
 
         return np.deg2rad(angles_deg)
 
