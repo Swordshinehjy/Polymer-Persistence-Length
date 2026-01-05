@@ -561,7 +561,7 @@ class PolymerPersistence:
         plt.plot(n_repeats, msd_values, linewidth=2, color='blue', marker='o')
         self.format_subplot("Number of Repeat Units (N)",
                             "Mean Square End-to-End Distance (Å²)",
-                            "<R²> vs. Number of Repeat Units")
+                            "Monte Carlo Simulation of <R²>")
         plt.tight_layout()
         plt.show()
 
@@ -820,6 +820,7 @@ class PolymerPersistence:
         except Exception as e:
             print(f"Error in plot_correlation_function: {str(e)}")
             return
+
     def calculate_exact_r2(self, n_repeats):
         """
         Calculates the exact mean square end-to-end distance <R^2> 
@@ -855,18 +856,83 @@ class PolymerPersistence:
             G_i[0, 0] = 1.0
             G_i[0, 1:4] = 2 * l_vec.T @ T_next
             G_i[0, 4] = l_sq
-            
+
             G_i[1:4, 1:4] = T_next
             G_i[1:4, 4] = l_vec
             G_i[4, 4] = 1.0
-            
+
             G_unit = G_unit @ G_i
         # 3.  G_chain = (G_unit)^n
         G_chain = np.linalg.matrix_power(G_unit, n_repeats)
-        
+
         # result at [0, 4]
         return G_chain[0, 4]
-    
+
+    def calc_mean_square_end_to_end_transfer_matrix(self,
+                                                    n_repeat_unit=20,
+                                                    return_data=False,
+                                                    plot=True):
+        """
+        Calculates and plots the exact mean square end-to-end distance <R^2>
+        as a function of the number of repeat units n from 0 to n_repeat_unit.
+        
+        Args:
+            n_repeat_unit (int): Maximum number of repeat units to calculate.
+            return_data (bool, optional): Whether to return the R2 data. Defaults to False.
+            plot (optional): Whether to plot the results. Defaults to True.
+            
+        Returns:
+            r2_array.
+        """
+        # Create array of n values from 0 to n_repeat_unit
+        n_array = np.arange(n_repeat_unit + 1)
+        r2_array = np.zeros(len(n_array))
+
+        # Get the G_unit matrix (same as in calculate_exact_r2)
+        num_bonds = len(self.bond_lengths)
+
+        if self._A_list is None:
+            self._calculate_Mmat()
+        avg_matrices = self._A_list
+
+        # Build the fundamental transfer matrix G_unit
+        G_unit = np.eye(5)
+        for i in range(num_bonds):
+            l_vec = np.array([self.bond_lengths[i], 0.0, 0.0])
+            l_sq = self.bond_lengths[i]**2
+            next_idx = (i + 1) % num_bonds
+            T_next = avg_matrices[next_idx]
+
+            G_i = np.zeros((5, 5))
+            G_i[0, 0] = 1.0
+            G_i[0, 1:4] = 2 * l_vec.T @ T_next
+            G_i[0, 4] = l_sq
+
+            G_i[1:4, 1:4] = T_next
+            G_i[1:4, 4] = l_vec
+            G_i[4, 4] = 1.0
+
+            G_unit = G_unit @ G_i
+        # Calculate R^2 for each n
+        for i, n in enumerate(n_array):
+            if n == 0:
+                r2_array[i] = 0.0  # For n=0, chain has no bonds, R^2=0
+            else:
+                G_chain = np.linalg.matrix_power(G_unit, n)
+                r2_array[i] = G_chain[0, 4]
+
+        # Plot the results
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_array, r2_array, 'bo-', linewidth=2)
+            self.format_subplot("Number of Repeat Units (N)",
+                                "Mean Square End-to-End Distance (Å²)",
+                                "Transfer Matrix Simulation of <R²>")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return r2_array
+
     def temperature_scan(self, T_list, plot=False):
         """
         T_list: iterable of temperatures (K)
