@@ -173,7 +173,10 @@ class PolymerPersistenceDependentDihedral:
         for rot_id, info in self.rotation_labels.items():
             try:
                 if 'fitf' in info:
-                    self._computational_data[rot_id] = {'fitf': info['fitf'], **info}
+                    self._computational_data[rot_id] = {
+                        'fitf': info['fitf'],
+                        **info
+                    }
                     continue
                 elif 'data' in info:
                     data = self._update_dihedral(info['data'])
@@ -196,13 +199,17 @@ class PolymerPersistenceDependentDihedral:
                             polyval(np.cos(np.deg2rad(z)), p_val))(p)
                 elif self.fitting_method == 'fourier':
                     rad = np.deg2rad(x)
-                    a = np.column_stack([np.cos(n * rad) for n in range(self.param_n + 1)])
+                    a = np.column_stack(
+                        [np.cos(n * rad) for n in range(self.param_n + 1)])
                     coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
-                    fitf = (lambda c, ord_val:
-                            lambda z: np.sum([
-                                c[n] * np.cos(n * np.deg2rad(z))
-                                for n in range(ord_val + 1)
-                            ], axis=0))(coeffs, self.param_n)
+                    fitf = (
+                        lambda c, ord_val: lambda z: np.sum([
+                            c[n] * np.cos(n * np.deg2rad(z))
+                            for n in range(ord_val + 1)
+                        ],
+                                                            axis=0))(
+                                                                coeffs,
+                                                                self.param_n)
                 self._computational_data[rot_id] = {'fitf': fitf, **info}
             except FileNotFoundError:
                 print(

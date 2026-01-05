@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import List, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,7 +10,6 @@ from numpy.linalg import eigvals
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from scipy.linalg import fractional_matrix_power
-from typing import List, Tuple, Union
 
 try:
     from . import chain_rotation
@@ -838,7 +838,8 @@ class PolymerPersistence:
             self._calculate_Mmat()
         avg_matrices = self._A_list
         # 2. Flory Generator Matrix
-        # important：G_i include l_i and T_{i+1}
+        # in our bond_angle and rotation definition,
+        # G_i include l_i and T_{i+1}
         # v_i . v_{i+1} correlation is defined by T_{i+1}
         G_unit = np.eye(5)
         for i in range(num_bonds):
@@ -884,18 +885,14 @@ class PolymerPersistence:
         Returns:
             r2_array.
         """
-        # Create array of n values from 0 to n_repeat_unit
         n_array = np.arange(n_repeat_unit + 1)
         r2_array = np.zeros(len(n_array))
-
-        # Get the G_unit matrix (same as in calculate_exact_r2)
         num_bonds = len(self.bond_lengths)
 
         if self._A_list is None:
             self._calculate_Mmat()
         avg_matrices = self._A_list
 
-        # Build the fundamental transfer matrix G_unit
         G_unit = np.eye(5)
         for i in range(num_bonds):
             l_vec = np.array([self.bond_lengths[i], 0.0, 0.0])
@@ -916,12 +913,10 @@ class PolymerPersistence:
         # Calculate R^2 for each n
         for i, n in enumerate(n_array):
             if n == 0:
-                r2_array[i] = 0.0  # For n=0, chain has no bonds, R^2=0
+                r2_array[i] = 0.0
             else:
                 G_chain = np.linalg.matrix_power(G_unit, n)
                 r2_array[i] = G_chain[0, 4]
-
-        # Plot the results
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(n_array, r2_array, 'bo-', linewidth=2)
@@ -1314,31 +1309,3 @@ def compare_persistence_results(models: List[PolymerPersistence],
     plt.title(title, fontsize=18, fontfamily="Helvetica")
     plt.tight_layout()
     plt.show()
-
-
-# ======================================================================
-#                            USAGE EXAMPLE
-# ======================================================================
-# if __name__ == '__main__':
-#     l = [4.289, 1.375, 4.289, 1.459, 2.510, 1.441, 2.510, 1.459]
-#     Angle = np.array([-3.8, 38.1, -38.1, 3.8, 15.3,13.3,-13.3,-15.3 ])
-#     rotation = np.array([0, 0, 0, 1, 0, 2, 0, 1])
-#     labels = {
-#         1: {
-#             'loc': 'IID-FT.txt',
-#             'color': 'b'
-#         },
-#         2: {
-#             'loc': 'FT-FT.txt',
-#             'color': 'm'
-#         },
-
-#     }
-
-#     ris = np.array([0, 3, 0, 0, 0, 0, 0, 0])
-#     ris_label = {
-#         3: {'loc': 'EIID-RIS.txt', 'color': 'c'},
-#         }
-
-#     a = PolymerPersistence(l, Angle, rotation_types=rotation, rotation_labels=labels, ris_types=ris, ris_labels=ris_label)
-#     a.report()

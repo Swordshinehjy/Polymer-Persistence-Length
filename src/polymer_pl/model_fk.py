@@ -4,6 +4,7 @@ This version directly computes unit vectors without building and rotating a stra
 """
 
 from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
@@ -551,7 +552,7 @@ class PolymerPersistenceFK:
             plt.plot(np.arange(n_repeat_units + 1), r2, 'bo-')
             self.format_subplot("Number of Repeat Units (N)",
                                 "Mean Square End-to-End Distance (Å²)",
-                                "<R²> vs. Number of Repeat Units")
+                                "Forward Kinetics Simulation of <R²>")
             plt.show()
         if return_data:
             return r2

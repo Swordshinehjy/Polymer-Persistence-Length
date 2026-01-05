@@ -1,6 +1,7 @@
+from typing import List, Union
+
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import List, Tuple, Union
 from scipy.spatial import ConvexHull
 
 

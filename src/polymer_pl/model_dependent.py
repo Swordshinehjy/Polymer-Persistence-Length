@@ -119,7 +119,7 @@ class PolymerPersistenceDependentDefelection:
         delimiter = ',' if file_name.suffix == '.csv' else None
         data = np.loadtxt(file_name, delimiter=delimiter)
         return self._update_angle(data)
-    
+
     def _minimize_dihedral(self, data):
         new_energy = data[:, 1] - data[:, 1].min()
         return np.column_stack((data[:, 0], new_energy))
@@ -144,7 +144,10 @@ class PolymerPersistenceDependentDefelection:
         for rot_id, info in self.rotation_labels.items():
             try:
                 if 'fitf' in info:
-                    self._computational_data[rot_id] = {'fitf': info['fitf'], **info}
+                    self._computational_data[rot_id] = {
+                        'fitf': info['fitf'],
+                        **info
+                    }
                     continue
                 elif 'data' in info:
                     data = self._update_angle(info['data'])
@@ -168,13 +171,17 @@ class PolymerPersistenceDependentDefelection:
                             polyval(np.cos(np.deg2rad(z)), p_val))(p)
                 elif self.fitting_method == 'fourier':
                     rad = np.deg2rad(x)
-                    a = np.column_stack([np.cos(n * rad) for n in range(self.param_n + 1)])
+                    a = np.column_stack(
+                        [np.cos(n * rad) for n in range(self.param_n + 1)])
                     coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
-                    fitf = (lambda c, ord_val:
-                            lambda z: np.sum([
-                                c[n] * np.cos(n * np.deg2rad(z))
-                                for n in range(ord_val + 1)
-                            ], axis=0))(coeffs, self.param_n)
+                    fitf = (
+                        lambda c, ord_val: lambda z: np.sum([
+                            c[n] * np.cos(n * np.deg2rad(z))
+                            for n in range(ord_val + 1)
+                        ],
+                                                            axis=0))(
+                                                                coeffs,
+                                                                self.param_n)
                 self._computational_data[rot_id] = {'fitf': fitf, **info}
             except FileNotFoundError:
                 print(
@@ -292,7 +299,8 @@ class PolymerPersistenceDependentDefelection:
                     np.deg2rad(angle_avg))
             else:
                 fitf = self._computational_data[deflection_id]['fitf']
-                c, s, angle_avg = self._compute_deflection_integrals(fitf_angle, fitf)
+                c, s, angle_avg = self._compute_deflection_integrals(
+                    fitf_angle, fitf)
             if rot_id == 0 and ris_id == 0:
                 m_i, s_i = 1.0, 0.0  # Fixed bond
             elif rot_id != 0:

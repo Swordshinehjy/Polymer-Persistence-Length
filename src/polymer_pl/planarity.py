@@ -1,12 +1,11 @@
 from pathlib import Path
+from typing import List, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.constants as sc
-from numpy.linalg import eigvals
-from scipy.integrate import cumulative_trapezoid, quad
+from scipy.integrate import quad
 from scipy.interpolate import interp1d
-from typing import Dict, List, Optional, Tuple, Union
 
 
 class PolymerPlanarity:
