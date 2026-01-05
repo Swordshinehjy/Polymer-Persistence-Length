@@ -265,23 +265,6 @@ class PolymerPersistenceFK:
             flat_ris = np.tile(
                 self.ris_types, n_samples * n_total_bonds // n_bonds_per_unit +
                 1)[:n_total_bonds]
-            self.ris_types = np.array(self.ris_types)
-            if not hasattr(self, 'ris_data') or self.ris_data is None:
-                self.ris_data = {}
-                for ris_id, info in self.ris_labels.items():
-                    try:
-                        if 'data' in info:
-                            risdata = np.asarray(info['data'])
-                            angles, energies = risdata[:, 0], risdata[:, 1]
-                        elif 'loc' in info:
-                            angles, energies = self._read_ris_data(
-                                Path(info['loc']))
-                        self.ris_data[ris_id] = (angles, energies)
-                    except FileNotFoundError:
-                        print(
-                            f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
-                        )
-                        continue
             for ris_id, (ang_deg, energies) in self.ris_data.items():
                 mask = (flat_ris == ris_id)
                 if not np.any(mask):
