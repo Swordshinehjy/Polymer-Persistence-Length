@@ -402,12 +402,12 @@ class PolymerPersistenceConfined:
             c, s = np.cos(theta), np.sin(theta)
             R_z = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1]])
 
-            A_list.append(R_x @ R_z)
+            A_list.append(R_z @ R_x)
 
         # Multiply all transformation matrices for the repeat unit
         Mmat = np.eye(3)
         for A in A_list:
-            Mmat = A @ Mmat
+            Mmat = Mmat @ A
         self._Mmat = Mmat
 
     def run_calculation(self):

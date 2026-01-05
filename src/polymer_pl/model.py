@@ -350,12 +350,12 @@ class PolymerPersistence:
             c, s = np.cos(theta), np.sin(theta)
             R_z = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1]])
 
-            A_list.append(R_x @ R_z)
+            A_list.append(R_z @ R_x)
 
         # Multiply all transformation matrices for the repeat unit
         Mmat = np.eye(3)
         for A in A_list:
-            Mmat = A @ Mmat
+            Mmat = Mmat @ A
         self._Mmat = Mmat
         self._A_list = A_list
 
@@ -820,7 +820,53 @@ class PolymerPersistence:
         except Exception as e:
             print(f"Error in plot_correlation_function: {str(e)}")
             return
+    def calculate_exact_r2(self, n_repeats):
+        """
+        Calculates the exact mean square end-to-end distance <R^2> 
+        matching the specific forward kinematics of the Monte Carlo simulation.
+        
+        Args:
+            n_repeats (int): Number of repeat units.
+            
+        Returns:
+            float: The exact <R^2>.
+        """
+        num_bonds = len(self.bond_lengths)
 
+        if self._A_list is None:
+            self._calculate_Mmat()
+        avg_matrices = self._A_list
+        # 2. Flory Generator Matrix
+        # important：G_i include l_i and T_{i+1}
+        # v_i . v_{i+1} correlation is defined by T_{i+1}
+        G_unit = np.eye(5)
+        for i in range(num_bonds):
+            # current bond length
+            l_vec = np.array([self.bond_lengths[i], 0.0, 0.0])
+            l_sq = self.bond_lengths[i]**2
+            # matrix for the next bond (periodic boundary)
+            next_idx = (i + 1) % num_bonds
+            T_next = avg_matrices[next_idx]
+            # build G_i
+            # [ 1  2l^T T_next  l^2 ]
+            # [ 0    T_next      l  ]
+            # [ 0      0         1  ]
+            G_i = np.zeros((5, 5))
+            G_i[0, 0] = 1.0
+            G_i[0, 1:4] = 2 * l_vec.T @ T_next
+            G_i[0, 4] = l_sq
+            
+            G_i[1:4, 1:4] = T_next
+            G_i[1:4, 4] = l_vec
+            G_i[4, 4] = 1.0
+            
+            G_unit = G_unit @ G_i
+        # 3.  G_chain = (G_unit)^n
+        G_chain = np.linalg.matrix_power(G_unit, n_repeats)
+        
+        # result at [0, 4]
+        return G_chain[0, 4]
+    
     def temperature_scan(self, T_list, plot=False):
         """
         T_list: iterable of temperatures (K)

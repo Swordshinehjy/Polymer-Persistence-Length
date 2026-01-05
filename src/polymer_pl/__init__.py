@@ -17,4 +17,4 @@ from .backbone import PolymerBackbone
 from .model_confined import PolymerPersistenceConfined
 from .model_fk import PolymerPersistenceFK
 
-__version__ = '0.10.4'
+__version__ = '0.10.5'

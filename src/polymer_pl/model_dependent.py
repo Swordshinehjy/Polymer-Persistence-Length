@@ -331,13 +331,13 @@ class PolymerPersistenceDependentDefelection:
             # Bond angle deflection matrix (around z-axis)
             R_z = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1]])
 
-            A_list.append(R_x @ R_z)
+            A_list.append(R_z @ R_x)
             avg_angles.append(angle_avg)
 
         # Multiply all transformation matrices for the repeat unit
         Mmat = np.eye(3)
         for A in A_list:
-            Mmat = A @ Mmat
+            Mmat = Mmat @ A
         self._Mmat = Mmat
         self._avg_angles = avg_angles
 
