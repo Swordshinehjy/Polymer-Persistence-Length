@@ -359,6 +359,83 @@ class PolymerPersistence:
         self._Mmat = Mmat
         self._A_list = A_list
 
+    def build_G_unit(self):
+        """
+        Builds the unit transfer matrix G_unit for the polymer chain.
+        Returns:
+            np.ndarray: The unit transfer matrix G_unit.
+        """
+        # Flory Generator Matrix
+        # in our bond_angle and rotation definition,
+        # G_i include l_i and T_{i+1}
+        # v_i . v_{i+1} correlation is defined by T_{i+1}
+        num_bonds = len(self.bond_lengths)
+        if self._A_list is None:
+            self._calculate_Mmat()
+        avg_matrices = self._A_list
+        G_unit = np.eye(5)
+        for i in range(num_bonds):
+            # current bond length
+            l_vec = np.array([self.bond_lengths[i], 0.0, 0.0])
+            l_sq = self.bond_lengths[i]**2
+            # matrix for the next bond (periodic boundary)
+            next_idx = (i + 1) % num_bonds
+            T_next = avg_matrices[next_idx]
+            # build G_i
+            # [ 1  2l^T T_next  l^2 ]
+            # [ 0    T_next      l  ]
+            # [ 0      0         1  ]
+            G_i = np.zeros((5, 5))
+            G_i[0, 0] = 1.0
+            G_i[0, 1:4] = 2 * l_vec.T @ T_next
+            G_i[0, 4] = l_sq
+
+            G_i[1:4, 1:4] = T_next
+            G_i[1:4, 4] = l_vec
+            G_i[4, 4] = 1.0
+
+            G_unit = G_unit @ G_i
+        return G_unit
+
+    def calculate_characteristic_ratio(self):
+        """
+        Calculates the Characteristic Ratio C_infinity using the algebraic 
+        steady-state solution of the Flory generator matrix.
+        Formula:
+            Delta_R2 = G[0,4] + G[0, 1:4] @ (I - G[1:4, 1:4])^-1 @ G[1:4, 4]
+            C_inf = Delta_R2 / l_unit^2
+        """
+        # Build the generator matrix for the repeating unit
+        G_unit = self.build_G_unit()
+        # Extract submatrices
+        # M: rotation matrix (3x3)
+        M = G_unit[1:4, 1:4]
+        # p: end-to-end vector of unit (3x1)
+        p = G_unit[1:4, 4]
+        # n: correlation row vector (1x3)
+        n_vec = G_unit[0, 1:4]
+        # s: scalar within unit
+        s = G_unit[0, 4]
+        # Check for rigid rod case (if eigenvalue is close to 1, matrix is not invertible)
+        # Considering floating-point errors, treat as infinite if close to 1
+        if np.abs(self._lambda_max - 1.0) < 1e-10:
+            return np.inf
+        # Algebraically solve for the increment Delta <R^2> in the long-chain limit
+        # (I - M)^-1
+        I = np.eye(3)
+        try:
+            inv_I_minus_M = np.linalg.inv(I - M)
+        except np.linalg.LinAlgError:
+            return np.inf
+        # Delta R^2 = s + n * (I-M)^-1 * p
+        delta_R2 = s + n_vec @ inv_I_minus_M @ p
+        # Normalize to calculate characteristic ratio
+        # Maintaining your original normalization: l_unit = sum(bond_lengths)
+        l_unit = np.sum(self.bond_lengths)
+        C_inf = delta_R2 / (l_unit**2)
+
+        return C_inf
+
     def run_calculation(self):
         """
         Runs the full calculation to find the persistence length.
@@ -390,11 +467,6 @@ class PolymerPersistence:
         return self.persistence_length_repeats * np.sum(self.bond_lengths)
 
     @property
-    def kuhn_length(self):
-        """The Kuhn length."""
-        return self.persistence_length * 2
-
-    @property
     def lambda_max(self):
         """The largest absolute eigenvalue of the transformation matrix."""
         if self._lambda_max is None:
@@ -407,6 +479,20 @@ class PolymerPersistence:
         if self._Mmat is None:
             self._calculate_Mmat()
         return self._Mmat
+
+    @property
+    def c_inf(self):
+        """The characteristic ratio."""
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        return self.calculate_characteristic_ratio()
+
+    @property
+    def kuhn_length(self):
+        """The Kuhn length."""
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        return np.sum(self.bond_lengths) * self.c_inf
 
     def format_subplot(self, xlabel, ylabel, title):
         """Format subplot with consistent styling."""
@@ -832,38 +918,8 @@ class PolymerPersistence:
         Returns:
             float: The exact <R^2>.
         """
-        num_bonds = len(self.bond_lengths)
-
-        if self._A_list is None:
-            self._calculate_Mmat()
-        avg_matrices = self._A_list
-        # 2. Flory Generator Matrix
-        # in our bond_angle and rotation definition,
-        # G_i include l_i and T_{i+1}
-        # v_i . v_{i+1} correlation is defined by T_{i+1}
-        G_unit = np.eye(5)
-        for i in range(num_bonds):
-            # current bond length
-            l_vec = np.array([self.bond_lengths[i], 0.0, 0.0])
-            l_sq = self.bond_lengths[i]**2
-            # matrix for the next bond (periodic boundary)
-            next_idx = (i + 1) % num_bonds
-            T_next = avg_matrices[next_idx]
-            # build G_i
-            # [ 1  2l^T T_next  l^2 ]
-            # [ 0    T_next      l  ]
-            # [ 0      0         1  ]
-            G_i = np.zeros((5, 5))
-            G_i[0, 0] = 1.0
-            G_i[0, 1:4] = 2 * l_vec.T @ T_next
-            G_i[0, 4] = l_sq
-
-            G_i[1:4, 1:4] = T_next
-            G_i[1:4, 4] = l_vec
-            G_i[4, 4] = 1.0
-
-            G_unit = G_unit @ G_i
-        # 3.  G_chain = (G_unit)^n
+        G_unit = self.build_G_unit()
+        # G_chain = (G_unit)^n
         G_chain = np.linalg.matrix_power(G_unit, n_repeats)
 
         # result at [0, 4]
@@ -887,29 +943,7 @@ class PolymerPersistence:
         """
         n_array = np.arange(n_repeat_unit + 1)
         r2_array = np.zeros(len(n_array))
-        num_bonds = len(self.bond_lengths)
-
-        if self._A_list is None:
-            self._calculate_Mmat()
-        avg_matrices = self._A_list
-
-        G_unit = np.eye(5)
-        for i in range(num_bonds):
-            l_vec = np.array([self.bond_lengths[i], 0.0, 0.0])
-            l_sq = self.bond_lengths[i]**2
-            next_idx = (i + 1) % num_bonds
-            T_next = avg_matrices[next_idx]
-
-            G_i = np.zeros((5, 5))
-            G_i[0, 0] = 1.0
-            G_i[0, 1:4] = 2 * l_vec.T @ T_next
-            G_i[0, 4] = l_sq
-
-            G_i[1:4, 1:4] = T_next
-            G_i[1:4, 4] = l_vec
-            G_i[4, 4] = 1.0
-
-            G_unit = G_unit @ G_i
+        G_unit = self.build_G_unit()
         # Calculate R^2 for each n
         for i, n in enumerate(n_array):
             if n == 0:
