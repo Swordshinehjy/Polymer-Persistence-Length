@@ -445,7 +445,7 @@ class PolymerPersistence:
         """
         Calculates the geometric persistence length l_p.
         Definition: The projection of the average end-to-end vector of an 
-        infinite chain onto the direction of the first unit.
+        infinite chain onto the direction of the first bond.
         This is more accurate for discrete chains than the eigenvalue method 
         (-1/ln(lambda)), which describes correlation decay rate rather than physical length.
         """
@@ -462,19 +462,15 @@ class PolymerPersistence:
         if np.abs(self.lambda_max - 1.0) < 1e-10:
             return np.inf
         # Algebraically solve infinite series: <R> = (I - M)^-1 @ p
+        # Because <R> = p + M@ p + M^2 @ p + ... = (I - M)^-1 @ p
         I = np.eye(3)
         try:
-            # Calculate inverse of (I - M)
-            inv_I_minus_M = np.linalg.inv(I - M)
-            R_avg = inv_I_minus_M @ p
+            # (I - M)^-1 @ p
+            R_avg = np.linalg.solve(I - M, p)
         except np.linalg.LinAlgError:
             return np.inf
-        # Project onto direction of first unit
-        p_norm = np.linalg.norm(p)
-        if p_norm < 1e-12:
-            return 0.0
-        lp = np.dot(R_avg, p) / p_norm
-        return lp
+        # Project onto direction of first bond (x axis)
+        return R_avg[0]
 
     def run_calculation(self):
         """
@@ -542,12 +538,13 @@ class PolymerPersistence:
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
         return self.average_unit_length * self.c_inf
+
     @property
     def persistence_length(self):
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
         return self.calculate_persistence_length()
-    
+
     @property
     def persistence_length_units(self):
         """The persistence length in repeat units."""
@@ -1036,12 +1033,8 @@ class PolymerPersistence:
         kT_orig = self.kTval
         for T in Ts:
             self.kTval = sc.R * T / 1000.0  # kJ/mol
-            # clear cached integrals because they depend on kT
-            # simplest approach: reset computational caches that depend on kT
-            self._computational_data = {}
-            self._full_data = {}
-
-            # recompute M matrix (vectorized)
+            # self._computational_data only restore fitf
+            # fitf is independent of kT
             try:
                 self._calculate_Mmat()
                 results['Mmat'].append(self._Mmat)
@@ -1058,8 +1051,7 @@ class PolymerPersistence:
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(Ts, results['corr'], 'o-')
-            self.format_subplot("Temperature (K)",
-                                "Correlation Length",
+            self.format_subplot("Temperature (K)", "Correlation Length",
                                 "Temperature Scan")
             plt.show()
         # restore original

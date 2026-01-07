@@ -473,7 +473,7 @@ class PolymerPersistenceConfined:
         """
         Calculates the geometric persistence length l_p.
         Definition: The projection of the average end-to-end vector of an 
-        infinite chain onto the direction of the first unit.
+        infinite chain onto the direction of the first bond.
         This is more accurate for discrete chains than the eigenvalue method 
         (-1/ln(lambda)), which describes correlation decay rate rather than physical length.
         """
@@ -486,15 +486,11 @@ class PolymerPersistenceConfined:
             return np.inf
         I = np.eye(3)
         try:
-            inv_I_minus_M = np.linalg.inv(I - M)
-            R_avg = inv_I_minus_M @ p
+            R_avg = np.linalg.solve(I - M, p)
         except np.linalg.LinAlgError:
             return np.inf
-        p_norm = np.linalg.norm(p)
-        if p_norm < 1e-12:
-            return 0.0
-        lp = np.dot(R_avg, p) / p_norm
-        return lp
+        # Project onto direction of first bond (x axis)
+        return R_avg[0]
 
     def run_calculation(self):
         """
@@ -698,11 +694,6 @@ class PolymerPersistenceConfined:
         kT_orig = self.kTval
         for T in Ts:
             self.kTval = sc.R * T / 1000.0  # kJ/mol
-            # clear cached integrals because they depend on kT
-            # simplest approach: reset computational caches that depend on kT
-            self._computational_data = {}
-            self._full_data = {}
-
             # recompute M matrix (vectorized)
             try:
                 self._calculate_Mmat()

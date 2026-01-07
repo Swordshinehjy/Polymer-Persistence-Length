@@ -556,3 +556,71 @@ class PolymerPersistenceFK:
             plt.show()
         if return_data:
             return r2
+
+    def calc_end_to_end_distribution(self,
+                                     n_repeat_units=20,
+                                     n_samples=150000,
+                                     bins=100,
+                                     use_r2=True,
+                                     density=True,
+                                     plot=True,
+                                     use_cython=True,
+                                     return_data=False):
+        """
+        Calculate the distribution of end-to-end distance (R or R^2)
+        for the FULL chain length.
+
+        Parameters
+        ----------
+        use_r2 : bool
+            If True, compute distribution of R^2.
+            If False, compute distribution of R = sqrt(R^2).
+        density : bool
+            If True, normalize histogram to PDF.
+        """
+
+        if chain_fk is None:
+            print("Warning: chain_rotation_fk Cython module not available.")
+            use_cython = False
+
+        n_bonds_per_unit = len(self.bond_angles_rad)
+        n_total_bonds = n_bonds_per_unit * n_repeat_units
+        all_angles = self.pre_generate_angles(n_samples, n_total_bonds)
+        if use_cython:
+            batch_size = 1000
+            n_batches = n_samples // batch_size
+            n_jobs = psutil.cpu_count(logical=False)
+
+            r2_results = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(chain_fk.batch_end_to_end)
+                (np.ascontiguousarray(self.bond_lengths, dtype=np.float64),
+                 np.ascontiguousarray(self.bond_angles_rad, dtype=np.float64),
+                 np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
+                                                 batch_size],
+                                      dtype=np.float64), n_repeat_units)
+                for i in range(n_batches))
+
+            r2_results = np.vstack(r2_results)
+            # R^2 for full chain
+            r2_full = r2_results[:, -1]
+
+        else:
+            all_chains = self.build_all_chains_no_cython(
+                n_samples, n_repeat_units, all_angles)
+            vec = all_chains[:, -1, :] - all_chains[:, 0, :]
+            r2_full = np.sum(vec**2, axis=1)
+        # R or R^2
+        values = r2_full if use_r2 else np.sqrt(r2_full)
+        hist, bin_edges = np.histogram(values, bins=bins, density=density)
+        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(bin_centers, hist, 'b-', lw=2)
+            xlabel = r"$R^2$ ($\mathrm{\AA}^2$)" if use_r2 else r"$R$ ($\mathrm{\AA}$)"
+            ylabel = "Probability Density" if density else "Counts"
+            self.format_subplot(xlabel, ylabel,
+                                "End-to-End Distance Distribution")
+            plt.show()
+
+        if return_data:
+            return bin_centers, hist
