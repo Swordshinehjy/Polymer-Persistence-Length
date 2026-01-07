@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 
 class PolymerPlanarity:
     """
-    Calculates the persistence length of a polymer chain based on its
+    Calculates the correlation length of a polymer planarity based on its
     molecular structure and dihedral angle potentials.
 
     This class encapsulates the calculations for determining the persistence

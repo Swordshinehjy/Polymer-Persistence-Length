@@ -7,7 +7,7 @@ from scipy.spatial import ConvexHull
 
 class PolymerBackbone:
     """
-    Calculates the persistence length of a polymer chain based on its
+    Calculates the backbone information of a polymer chain based on its
     molecular structure and dihedral angle potentials.
 
     This class encapsulates the calculations for determining the persistence
@@ -253,7 +253,7 @@ class PolymerBackbone:
         circ_curvature_mean = np.mean(self._circ_curvature)
         circ_curvature_std = np.std(self._circ_curvature)
 
-        print("---- Persistence Length Calculation Report ----")
+        print("---- Backbone Calculation Report ----")
         print(f"Straightness Ratio (Ree/Lc): {ratio:.6f}")
         print(f"<cos(θ)>: {cos_mean:.6f} ± {cos_std:.6f}")
         print(f"<θ>: {theta_mean:.6f} ± {theta_std:.6f} (deg)")

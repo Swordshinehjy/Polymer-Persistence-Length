@@ -281,7 +281,7 @@ class PolymerPersistenceFK:
 
         return np.deg2rad(angles_deg)
 
-    def calculate_persistence_length_mc(self,
+    def calculate_correlation_length_mc(self,
                                         n_repeat_units=20,
                                         n_samples=150000,
                                         use_cython=True):
@@ -289,7 +289,7 @@ class PolymerPersistenceFK:
         Optimized Monte Carlo calculation using forward kinematics.
         Returns:
         --------
-        float: Persistence length in repeat units
+        float: Correlation length
         """
         if chain_fk is None:
             print("Warning: chain_rotation_fk Cython module not available.")
@@ -346,13 +346,13 @@ class PolymerPersistenceFK:
         y_fit = np.log(corr_mean[start_idx:end_idx][valid_mask])
 
         p = np.polynomial.polynomial.polyfit(x_fit, y_fit, 1)
-        persistence_length = -1 / p[1] if p[1] != 0 else np.inf
+        corr_length = -1 / p[1] if p[1] != 0 else np.inf
 
         print(f"\nOptimized Monte Carlo Result:")
         print(f"Slope: {p[1]:.6f}")
-        print(f"Persistence Length: {persistence_length:.2f} repeat units")
+        print(f"Correlation Length: {corr_length:.2f} repeat units")
 
-        return persistence_length
+        return corr_length
 
     @staticmethod
     def cosVals(pts, length):
@@ -424,7 +424,7 @@ class PolymerPersistenceFK:
         x_fit = repeat_units[start_idx:end_idx][valid_mask]
         y_fit = np.log(corr_mean[start_idx:end_idx][valid_mask])
         p = np.polynomial.polynomial.polyfit(x_fit, y_fit, 1)
-        persistence_length = -1 / p[1] if p[1] != 0 else np.inf
+        corr_length = -1 / p[1] if p[1] != 0 else np.inf
 
         plt.figure(figsize=(6, 5))
         plt.plot(x_fit, y_fit, 'bo', label='Log Correlation')
@@ -433,7 +433,7 @@ class PolymerPersistenceFK:
                  'b--',
                  linewidth=2,
                  alpha=0.7,
-                 label=f'Np = {persistence_length:.5f}')
+                 label=f'zeta = {corr_length:.5f}')
         self.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
                             "Log of Correlation Function")
         plt.show()

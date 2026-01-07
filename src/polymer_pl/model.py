@@ -96,8 +96,9 @@ class PolymerPersistence:
         # --- Internal cache for lazy evaluation ---
         self._Mmat = None
         self._A_list = None
+        self._G_unit = None
         self._lambda_max = None
-        self._lp_in_repeats = None
+        self._correlation_length = None
         self._computational_data = {}
         self._full_data = {}
         self.fitting_method = fitting_method
@@ -354,8 +355,10 @@ class PolymerPersistence:
 
         # Multiply all transformation matrices for the repeat unit
         Mmat = np.eye(3)
-        for A in A_list:
-            Mmat = Mmat @ A
+        if len(A_list) > 1:
+            for A in A_list[1:]:
+                Mmat = Mmat @ A
+        Mmat = Mmat @ A_list[0]
         self._Mmat = Mmat
         self._A_list = A_list
 
@@ -395,7 +398,7 @@ class PolymerPersistence:
             G_i[4, 4] = 1.0
 
             G_unit = G_unit @ G_i
-        return G_unit
+        self._G_unit = G_unit
 
     def calculate_characteristic_ratio(self):
         """
@@ -406,7 +409,9 @@ class PolymerPersistence:
             C_inf = Delta_R2 / l_unit^2
         """
         # Build the generator matrix for the repeating unit
-        G_unit = self.build_G_unit()
+        if self._G_unit is None:
+            self.build_G_unit()
+        G_unit = self._G_unit
         # Extract submatrices
         # M: rotation matrix (3x3)
         M = G_unit[1:4, 1:4]
@@ -430,15 +435,50 @@ class PolymerPersistence:
         # Delta R^2 = s + n * (I-M)^-1 * p
         delta_R2 = s + n_vec @ inv_I_minus_M @ p
         # Normalize to calculate characteristic ratio
-        # Maintaining your original normalization: l_unit = sum(bond_lengths)
-        l_unit = np.sum(self.bond_lengths)
-        C_inf = delta_R2 / (l_unit**2)
-
+        p_sq_norm = np.dot(p, p)
+        if p_sq_norm < 1e-12:
+            return 0.0
+        C_inf = delta_R2 / p_sq_norm
         return C_inf
+
+    def calculate_persistence_length(self):
+        """
+        Calculates the geometric persistence length l_p.
+        Definition: The projection of the average end-to-end vector of an 
+        infinite chain onto the direction of the first unit.
+        This is more accurate for discrete chains than the eigenvalue method 
+        (-1/ln(lambda)), which describes correlation decay rate rather than physical length.
+        """
+        # Get the unit Transfer Matrix
+        if self._G_unit is None:
+            self.build_G_unit()
+        G_unit = self._G_unit
+        # Extract the average rotation matrix M (3x3) and average unit vector p (3x1)
+        # Corresponding to Flory matrix elements [1:4, 1:4] and [1:4, 4]
+        M = G_unit[1:4, 1:4]
+        p = G_unit[1:4, 4]
+        # Check if it's a rigid rod (eigenvalue of M close to 1)
+        # Using existing lambda_max check
+        if np.abs(self.lambda_max - 1.0) < 1e-10:
+            return np.inf
+        # Algebraically solve infinite series: <R> = (I - M)^-1 @ p
+        I = np.eye(3)
+        try:
+            # Calculate inverse of (I - M)
+            inv_I_minus_M = np.linalg.inv(I - M)
+            R_avg = inv_I_minus_M @ p
+        except np.linalg.LinAlgError:
+            return np.inf
+        # Project onto direction of first unit
+        p_norm = np.linalg.norm(p)
+        if p_norm < 1e-12:
+            return 0.0
+        lp = np.dot(R_avg, p) / p_norm
+        return lp
 
     def run_calculation(self):
         """
-        Runs the full calculation to find the persistence length.
+        Runs the full calculation to find the correlation length.
         This method populates the result attributes.
         """
         if self._Mmat is None:
@@ -448,23 +488,16 @@ class PolymerPersistence:
         self._lambda_max = float(np.max(np.abs(eigs)))
 
         if self._lambda_max >= 1.0:
-            self._lp_in_repeats = np.inf
+            self._correlation_length = np.inf
         else:
-            self._lp_in_repeats = -1.0 / np.log(self._lambda_max)
+            self._correlation_length = -1.0 / np.log(self._lambda_max)
 
     @property
-    def persistence_length_repeats(self):
-        """The persistence length in units of repeat units."""
-        if self._lp_in_repeats is None:
+    def correlation_length(self):
+        """The correlation length."""
+        if self._correlation_length is None:
             self.run_calculation()
-        return self._lp_in_repeats
-
-    @property
-    def persistence_length(self):
-        """The persistence length."""
-        if self.bond_lengths is None:
-            raise RuntimeError("Bond lengths not set.")
-        return self.persistence_length_repeats * np.sum(self.bond_lengths)
+        return self._correlation_length
 
     @property
     def lambda_max(self):
@@ -481,6 +514,13 @@ class PolymerPersistence:
         return self._Mmat
 
     @property
+    def generator_matrix(self):
+        """The generator matrix for the repeat unit."""
+        if self._G_unit is None:
+            self.build_G_unit()
+        return self._G_unit
+
+    @property
     def c_inf(self):
         """The characteristic ratio."""
         if self.bond_lengths is None:
@@ -488,11 +528,30 @@ class PolymerPersistence:
         return self.calculate_characteristic_ratio()
 
     @property
+    def average_unit_length(self):
+        """The average unit length."""
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        if self._G_unit is None:
+            self.build_G_unit()
+        return np.linalg.norm(self._G_unit[1:4, 4])
+
+    @property
     def kuhn_length(self):
         """The Kuhn length."""
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
-        return np.sum(self.bond_lengths) * self.c_inf
+        return self.average_unit_length * self.c_inf
+    @property
+    def persistence_length(self):
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        return self.calculate_persistence_length()
+    
+    @property
+    def persistence_length_units(self):
+        """The persistence length in repeat units."""
+        return self.persistence_length / self.average_unit_length
 
     def format_subplot(self, xlabel, ylabel, title):
         """Format subplot with consistent styling."""
@@ -552,12 +611,12 @@ class PolymerPersistence:
     def report(self):
         """Prints a summary of the calculation results."""
         # Ensure calculation has been run
-        lp = self.persistence_length_repeats
+        corr = self.correlation_length
         lam = self.lambda_max
-        print("---- Persistence Length Calculation Report ----")
+        print("-------------- Calculation Report -------------")
         print(f"Temperature: {self.temperature} K")
         print(f"Max Eigenvalue (lambda_max): {lam:.12f}")
-        print(f"Persistence Length (in repeat units): {lp:.6f}")
+        print(f"Correlation Length: {corr:.6f}")
         print("-----------------------------------------------")
 
     def generate_chain(self, n_repeat_units):
@@ -654,11 +713,11 @@ class PolymerPersistence:
         if return_data:
             return msd_values
 
-    def calculate_persistence_length_mc(self,
+    def calculate_correlation_length_mc(self,
                                         n_repeat_units=20,
                                         n_samples=150000):
         """
-        Calculate persistence length using Monte Carlo sampling.
+        Calculate correlation length using Monte Carlo sampling.
         
         Parameters:
         -----------
@@ -674,7 +733,7 @@ class PolymerPersistence:
         Returns:
         --------
         float
-            The calculated persistence length in units of repeat units.
+            The calculated correlation length in units of repeat units.
         """
         if chain_rotation is None:
             print(
@@ -715,7 +774,7 @@ class PolymerPersistence:
             for i in range(n_batches))
         cosList2 = np.vstack(cosList2)
 
-        # Calculate persistence length
+        # Calculate correlation length
         corr2 = np.mean(cosList2, axis=0)
         repeat_units = np.arange(len(corr2))
         start_idx = 1
@@ -726,13 +785,13 @@ class PolymerPersistence:
                                              np.log(corr2[start_idx:end_idx]),
                                              1)
 
-        persistence_length = -1 / p[1]
+        corr_length = -1 / p[1]
 
         print(f"\nMonte Carlo Result:")
         print(f"slope: {p[1]:.6f}")
-        print(f"Persistence Length: {persistence_length:.2f}")
+        print(f"Correlation Length: {corr_length:.2f}")
 
-        return persistence_length
+        return corr_length
 
     def _batch_cosVals_optimized(self, ch, all_angles, flat_rotation, length):
         """Batch processing function optimized with Cython."""
@@ -878,11 +937,11 @@ class PolymerPersistence:
 
             if p[1] == 0:
                 print(
-                    "Warning: Zero slope in fit, persistence length undefined."
+                    "Warning: Zero slope in fit, correlation length undefined."
                 )
-                persistence_length = np.inf
+                corr_length = np.inf
             else:
-                persistence_length = -1 / p[1]
+                corr_length = -1 / p[1]
 
             # Plotting
             plt.figure(figsize=(6, 5))
@@ -896,7 +955,7 @@ class PolymerPersistence:
                      'b--',
                      linewidth=2,
                      alpha=0.7,
-                     label=f'Np = {persistence_length:.5f}')
+                     label=f'Np = {corr_length:.5f}')
             self.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
                                 "Log of Correlation Function")
             plt.show()
@@ -918,7 +977,9 @@ class PolymerPersistence:
         Returns:
             float: The exact <R^2>.
         """
-        G_unit = self.build_G_unit()
+        if self._G_unit is None:
+            self.build_G_unit()
+        G_unit = self._G_unit
         # G_chain = (G_unit)^n
         G_chain = np.linalg.matrix_power(G_unit, n_repeats)
 
@@ -943,7 +1004,9 @@ class PolymerPersistence:
         """
         n_array = np.arange(n_repeat_unit + 1)
         r2_array = np.zeros(len(n_array))
-        G_unit = self.build_G_unit()
+        if self._G_unit is None:
+            self.build_G_unit()
+        G_unit = self._G_unit
         # Calculate R^2 for each n
         for i, n in enumerate(n_array):
             if n == 0:
@@ -965,10 +1028,10 @@ class PolymerPersistence:
     def temperature_scan(self, T_list, plot=False):
         """
         T_list: iterable of temperatures (K)
-        Returns: dict with keys 'T', 'lp', 'Mmat'
+        Returns: dict with keys 'T', 'corr', 'Mmat'
         """
         Ts = np.asarray(T_list, dtype=np.float64)
-        results = {'T': Ts, 'lp': [], 'Mmat': []}
+        results = {'T': Ts, 'corr': [], 'Mmat': []}
 
         kT_orig = self.kTval
         for T in Ts:
@@ -988,15 +1051,15 @@ class PolymerPersistence:
             eigs = eigvals(self._Mmat)
             lambda_max = float(np.max(np.abs(eigs)))
             if lambda_max >= 1.0:
-                lp = np.inf
+                corr = np.inf
             else:
-                lp = -1.0 / np.log(lambda_max)
-            results['lp'].append(lp)
+                corr = -1.0 / np.log(lambda_max)
+            results['corr'].append(corr)
         if plot:
             plt.figure(figsize=(6, 5))
-            plt.plot(Ts, results['lp'], 'o-')
+            plt.plot(Ts, results['corr'], 'o-')
             self.format_subplot("Temperature (K)",
-                                "Persistence Length (repeat units)",
+                                "Correlation Length",
                                 "Temperature Scan")
             plt.show()
         # restore original
@@ -1007,7 +1070,7 @@ class PolymerPersistence:
 
 def compute_persistence_terpolymer(Mmat, prob):
     """
-    Computes persistence length for a terpolymer made of two repeat units 
+    Computes correlation length for a terpolymer made of two repeat units 
     appearing with probability prob and 1-prob.
 
     Parameters:
@@ -1020,7 +1083,7 @@ def compute_persistence_terpolymer(Mmat, prob):
     Returns:
     --------
     float
-        Persistence length in repeat units
+        Correlation length
     """
     # Type checking
     if not hasattr(Mmat, '__iter__') or not hasattr(prob, '__iter__'):
@@ -1059,10 +1122,10 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
                                          T_list,
                                          plot=True) -> np.ndarray:
     """
-    Computes persistence length for a terpolymer across a range of temperatures.
+    Computes correlation length for a terpolymer across a range of temperatures.
     
     This function integrates temperature_scan and compute_persistence_terpolymer
-    to calculate how the persistence length of a terpolymer changes with temperature.
+    to calculate how the correlation length of a terpolymer changes with temperature.
     
     Parameters:
     -----------
@@ -1078,7 +1141,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
         
     Returns:
     --------
-    2D numpy array, row: temperature, column: persistence length
+    2D numpy array, row: temperature, column: correlation length
     """
     # Type checking
     if not hasattr(polymer_models, '__iter__'):
@@ -1111,25 +1174,25 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
         axis=1)  # (P, N, 3, 3)
     eigs = np.linalg.eigvals(M_avg)  # (P,N,3)
     lambda_max = np.max(np.abs(eigs), axis=-1)  # (P,N)
-    lp = np.empty_like(lambda_max)
+    corr = np.empty_like(lambda_max)
 
     mask_bad = lambda_max >= 1.0
     mask_good = ~mask_bad
 
-    lp[mask_good] = -1.0 / np.log(lambda_max[mask_good])
-    lp[mask_bad] = np.inf
-    lp = lp.T
+    corr[mask_good] = -1.0 / np.log(lambda_max[mask_good])
+    corr[mask_bad] = np.inf
+    corr = corr.T
     if plot:
         if P == 1 and N == 1:
             # report
-            print("---- Persistence Length Calculation Report ----")
+            print("-------------- Calculation Report -------------")
             print(f"Temperature: {Ts[0]:.2f} K")
             print(f"Max Eigenvalue (lambda_max): {lambda_max[0, 0]:.12f}")
-            print(f"Persistence Length (in repeat units): {lp[0, 0]:.6f}")
+            print(f"Correlation Length: {corr[0, 0]:.6f}")
             print("-----------------------------------------------")
         elif P == 1:
             # 1D plot: persistence vs temperature (single composition)
-            lp_1d = lp[:, 0]
+            lp_1d = corr[:, 0]
             finite_mask = np.isfinite(lp_1d)
             plt.figure(figsize=(6, 5))
             plt.plot(Ts[finite_mask], lp_1d[finite_mask], 'o-')
@@ -1138,7 +1201,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
                 pass
             plt.xlabel("Temperature (K)", fontsize=16, fontfamily="Helvetica")
             plt.ylabel("$N_p$", fontsize=16, fontfamily="Helvetica")
-            plt.title("Persistence Length vs Temperature",
+            plt.title("Correlation Length vs Temperature",
                       fontsize=18,
                       fontfamily="Helvetica")
             plt.xticks(fontsize=14, fontfamily="Helvetica")
@@ -1149,7 +1212,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.show()
         elif N == 1:
             # Fixed T, vary composition → 1D curve: lp vs composition
-            lp_1d = lp[0, :]  # shape (P,)
+            lp_1d = corr[0, :]  # shape (P,)
             # Use first component probability as x-axis (assuming K >= 1)
             x = prob[:, 0]  # probability of first monomer
             finite = np.isfinite(lp_1d)
@@ -1169,7 +1232,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.minorticks_on()
             plt.show()
         else:
-            lp_plot = lp.copy()
+            lp_plot = corr.copy()
             lp_plot[np.isinf(lp_plot)] = np.nan  # Mask inf for display
             prob_first_component = prob[:, 0]
             plt.figure(figsize=(6, 5))
@@ -1186,7 +1249,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
                             interpolation='bicubic')
 
             cbar = plt.colorbar(im)
-            cbar.set_label("Persistence length",
+            cbar.set_label("Correlation length",
                            fontsize=14,
                            fontfamily="Helvetica")
             cbar.ax.tick_params(labelsize=14)
@@ -1200,7 +1263,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.xlabel("Probability of Repeat Unit 1",
                        fontsize=16,
                        fontfamily="Helvetica")
-            plt.title("Terpolymer Persistence Length",
+            plt.title("Terpolymer Correlation Length",
                       fontsize=18,
                       fontfamily="Helvetica")
             plt.xticks(fontsize=14, fontfamily="Helvetica")
@@ -1208,7 +1271,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             plt.minorticks_on()
             plt.tight_layout()
             plt.show()
-    return lp
+    return corr
 
 
 def inverse_data(filename):
@@ -1223,7 +1286,7 @@ def inverse_data(filename):
 
 def compute_persistence_alternating(model1, model2, temperature, plot=True):
     """
-    Compute persistence length for alternating matrices.
+    Compute correlation length for alternating matrices.
     
     Parameters:
     -----------
@@ -1236,7 +1299,7 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
     Returns:
     --------
     tuple
-        (persistence length, maximum eigenvalue)
+        (correlation length, maximum eigenvalue)
     """
     # Normalize input temperature to array
     is_scalar = np.isscalar(temperature) or (hasattr(temperature, '__len__')
@@ -1261,34 +1324,34 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
     eigs = np.linalg.eigvals(M_avg)  # (N, 3)
     lambda_max = np.max(np.abs(eigs), axis=-1)  # (N,)
 
-    lp = np.empty_like(lambda_max)
+    corr = np.empty_like(lambda_max)
     mask_good = lambda_max < 1.0
     mask_bad = ~mask_good
 
-    lp[mask_good] = -1.0 / np.log(lambda_max[mask_good])
-    lp[mask_bad] = np.inf
+    corr[mask_good] = -1.0 / np.log(lambda_max[mask_good])
+    corr[mask_bad] = np.inf
 
     if is_scalar:
         T_val = float(T_arr[0])
-        lp_val = lp[0]
+        lp_val = corr[0]
         lambda_val = lambda_max[0]
-        print("---- Alternating Copolymer Persistence Length Report ----")
+        print("---- Alternating Copolymer Correlation Length Report ----")
         print(f"Temperature: {T_val:.2f} K")
         print(f"Max Eigenvalue (λ_max): {lambda_val:.12f}")
         if np.isinf(lp_val):
-            print("Persistence Length: ∞ (rigid or semi-flexible limit)")
+            print("Correlation Length: ∞ (rigid or semi-flexible limit)")
         else:
-            print(f"Persistence Length (in repeat units): {lp_val:.6f}")
+            print(f"Correlation Length: {lp_val:.6f}")
         print("---------------------------------------------------------")
 
         return lp_val
     else:
         if plot:
             plt.figure(figsize=(6, 5))
-            finite_mask = np.isfinite(lp)
+            finite_mask = np.isfinite(corr)
             if np.any(finite_mask):
                 plt.plot(T_arr[finite_mask],
-                         lp[finite_mask],
+                         corr[finite_mask],
                          'o-',
                          color='tab:blue')
             if np.any(~finite_mask):
@@ -1305,20 +1368,20 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
             plt.tight_layout()
             plt.show()
 
-        return lp
+        return corr
 
 
 def compare_persistence_results(models: List[PolymerPersistence],
                                 labels: List[str],
                                 temperature: Union[float, List[float]],
-                                property='lp'):
+                                property='corr'):
     '''
     Compare persistence results between different models.
     Arguments:
         models: List of persistence models.
         labels: List of labels for the models.
         ts: List of temperature arrays.
-        property: Property to compare, e.g., 'lp'.
+        property: Property to compare, e.g., 'corr'.
     '''
     T_arr = np.atleast_1d(temperature).astype(np.float64)
     plt.figure(figsize=(6, 5))
@@ -1327,9 +1390,9 @@ def compare_persistence_results(models: List[PolymerPersistence],
         plt.plot(res['T'], res[property], 'o-', label=label)
 
     plt.xlabel('Temperature (K)', fontsize=16, fontfamily="Helvetica")
-    if property == 'lp':
+    if property == 'corr':
         ylabel = "$N_p$"
-        title = "Persistence Length in Repeat Units"
+        title = "Correlation length"
     else:
         raise ValueError(f"Unknown property: {property}")
     plt.legend()

@@ -79,8 +79,10 @@ class PolymerPersistenceDependentDefelection:
             self.deflection_types = np.array(deflection_types)
         # --- Internal cache for lazy evaluation ---
         self._Mmat = None
+        self._A_list = None
+        self._G_unit = None
         self._lambda_max = None
-        self._lp_in_repeats = None
+        self._correlation_length = None
         self._computational_data = {}
         self.fitting_method = fitting_method
         self.param_n = param_n
@@ -344,10 +346,13 @@ class PolymerPersistenceDependentDefelection:
 
         # Multiply all transformation matrices for the repeat unit
         Mmat = np.eye(3)
-        for A in A_list:
-            Mmat = Mmat @ A
+        if len(A_list) > 1:
+            for A in A_list[1:]:
+                Mmat = Mmat @ A
+        Mmat = Mmat @ A_list[0]
         self._Mmat = Mmat
         self._avg_angles = avg_angles
+        self._A_list = A_list
 
     def build_G_unit(self):
         """
@@ -377,7 +382,7 @@ class PolymerPersistenceDependentDefelection:
             G_i[4, 4] = 1.0
 
             G_unit = G_unit @ G_i
-        return G_unit
+        self._G_unit = G_unit
 
     def calculate_characteristic_ratio(self):
         """
@@ -387,7 +392,9 @@ class PolymerPersistenceDependentDefelection:
             Delta_R2 = G[0,4] + G[0, 1:4] @ (I - G[1:4, 1:4])^-1 @ G[1:4, 4]
             C_inf = Delta_R2 / l_unit^2
         """
-        G_unit = self.build_G_unit()
+        if self._G_unit is None:
+            self.build_G_unit()
+        G_unit = self._G_unit
         M = G_unit[1:4, 1:4]
         p = G_unit[1:4, 4]
         n_vec = G_unit[0, 1:4]
@@ -400,13 +407,42 @@ class PolymerPersistenceDependentDefelection:
         except np.linalg.LinAlgError:
             return np.inf
         delta_R2 = s + n_vec @ inv_I_minus_M @ p
-        l_unit = np.sum(self.bond_lengths)
-        C_inf = delta_R2 / (l_unit**2)
+        p_sq_norm = np.dot(p, p)
+        if p_sq_norm < 1e-12:
+            return 0.0
+        C_inf = delta_R2 / p_sq_norm
         return C_inf
+
+    def calculate_persistence_length(self):
+        """
+        Calculates the geometric persistence length l_p.
+        Definition: The projection of the average end-to-end vector of an 
+        infinite chain onto the direction of the first unit.
+        This is more accurate for discrete chains than the eigenvalue method 
+        (-1/ln(lambda)), which describes correlation decay rate rather than physical length.
+        """
+        if self._G_unit is None:
+            self.build_G_unit()
+        G_unit = self._G_unit
+        M = G_unit[1:4, 1:4]
+        p = G_unit[1:4, 4]
+        if np.abs(self.lambda_max - 1.0) < 1e-10:
+            return np.inf
+        I = np.eye(3)
+        try:
+            inv_I_minus_M = np.linalg.inv(I - M)
+            R_avg = inv_I_minus_M @ p
+        except np.linalg.LinAlgError:
+            return np.inf
+        p_norm = np.linalg.norm(p)
+        if p_norm < 1e-12:
+            return 0.0
+        lp = np.dot(R_avg, p) / p_norm
+        return lp
 
     def run_calculation(self):
         """
-        Runs the full calculation to find the persistence length.
+        Runs the full calculation to find the correlation length.
         This method populates the result attributes.
         """
         if self._Mmat is None:
@@ -416,23 +452,16 @@ class PolymerPersistenceDependentDefelection:
         self._lambda_max = float(np.max(np.abs(eigs)))
 
         if self._lambda_max >= 1.0:
-            self._lp_in_repeats = np.inf
+            self._correlation_length = np.inf
         else:
-            self._lp_in_repeats = -1.0 / np.log(self._lambda_max)
+            self._correlation_length = -1.0 / np.log(self._lambda_max)
 
     @property
-    def persistence_length_repeats(self):
-        """The persistence length in units of repeat units."""
-        if self._lp_in_repeats is None:
+    def correlation_length(self):
+        """The correlation length."""
+        if self._correlation_length is None:
             self.run_calculation()
-        return self._lp_in_repeats
-
-    @property
-    def persistence_length(self):
-        """The persistence length."""
-        if self.bond_lengths is None:
-            raise RuntimeError("Bond lengths not set.")
-        return self.persistence_length_repeats * np.sum(self.bond_lengths)
+        return self._correlation_length
 
     @property
     def lambda_max(self):
@@ -449,10 +478,26 @@ class PolymerPersistenceDependentDefelection:
         return self._Mmat
 
     @property
+    def generator_matrix(self):
+        """The generator matrix for the repeat unit."""
+        if self._G_unit is None:
+            self.build_G_unit()
+        return self._G_unit
+
+    @property
     def average_angles(self):
         if self._avg_angles is None:
             self._calculate_Mmat()
         return self._avg_angles
+
+    @property
+    def average_unit_length(self):
+        """The average unit length."""
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        if self._G_unit is None:
+            self.build_G_unit()
+        return np.linalg.norm(self._G_unit[1:4, 4])
 
     @property
     def c_inf(self):
@@ -466,7 +511,18 @@ class PolymerPersistenceDependentDefelection:
         """The Kuhn length."""
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
-        return np.sum(self.bond_lengths) * self.c_inf
+        return self.average_unit_length * self.c_inf
+
+    @property
+    def persistence_length(self):
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        return self.calculate_persistence_length()
+
+    @property
+    def persistence_length_units(self):
+        """The persistence length in repeat units."""
+        return self.persistence_length / self.average_unit_length
 
     def format_subplot(self, xlabel, ylabel, title):
         """Format subplot with consistent styling."""
@@ -484,12 +540,12 @@ class PolymerPersistenceDependentDefelection:
     def report(self):
         """Prints a summary of the calculation results."""
         # Ensure calculation has been run
-        lp = self.persistence_length_repeats
+        corr = self.correlation_length
         lam = self.lambda_max
-        print("---- Persistence Length Calculation Report ----")
+        print("-------------- Calculation Report -------------")
         print(f"Temperature: {self.temperature} K")
         print(f"Max Eigenvalue (lambda_max): {lam:.12f}")
-        print(f"Persistence Length (in repeat units): {lp:.6f}")
+        print(f"Correlation Length: {corr:.6f}")
         print("-----------------------------------------------")
 
     def report_average_angles(self, round=2):
@@ -518,10 +574,10 @@ class PolymerPersistenceDependentDefelection:
     def temperature_scan(self, T_list, plot=False):
         """
         T_list: iterable of temperatures (K)
-        Returns: dict with keys 'T', 'lp', 'Mmat'
+        Returns: dict with keys 'T', 'corr', 'Mmat'
         """
         Ts = np.asarray(T_list, dtype=np.float64)
-        results = {'T': Ts, 'lp': [], 'Mmat': [], 'average_angles': []}
+        results = {'T': Ts, 'corr': [], 'Mmat': [], 'average_angles': []}
 
         kT_orig = self.kTval
         for T in Ts:
@@ -541,15 +597,14 @@ class PolymerPersistenceDependentDefelection:
             eigs = eigvals(self._Mmat)
             lambda_max = float(np.max(np.abs(eigs)))
             if lambda_max >= 1.0:
-                lp = np.inf
+                corr = np.inf
             else:
-                lp = -1.0 / np.log(lambda_max)
-            results['lp'].append(lp)
+                corr = -1.0 / np.log(lambda_max)
+            results['corr'].append(corr)
         if plot:
             plt.figure(figsize=(6, 5))
-            plt.plot(Ts, results['lp'], 'o-')
-            self.format_subplot("Temperature (K)",
-                                "Persistence Length (repeat units)",
+            plt.plot(Ts, results['corr'], 'o-')
+            self.format_subplot("Temperature (K)", "Correlation Length",
                                 "Temperature Scan")
             plt.show()
         # restore original
