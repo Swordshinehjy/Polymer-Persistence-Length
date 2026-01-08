@@ -580,6 +580,24 @@ class PolymerPersistenceDependentDihedral:
         # Project onto direction of first bond (x axis)
         return R_avg[0]
 
+    def calculate_effective_unit_length_wlc(self):
+        """
+        Calculates the effective unit length for a worm-like chain (WLC) model.
+        """
+        if self._G_unit is None:
+            self.build_G_unit()
+        G = self._G_unit
+        s = G[0, 4]
+        n = G[0, 1:4]
+        p = G[1:4, 4]
+        M = G[1:4, 1:4]
+        I = np.eye(3)
+        a = s + n @ np.linalg.solve(I - M, p)
+        Np = -1 / np.log(np.max(np.abs(eigvals(M))))
+        alpha_sq = a / (2 * Np)
+        alpha = np.sqrt(alpha_sq)
+        return alpha
+
     def run_calculation(self):
         """
         Runs the full calculation to find the correlation length.
@@ -643,7 +661,7 @@ class PolymerPersistenceDependentDihedral:
     @property
     def average_unit_length(self):
         return np.linalg.norm(self.average_unit_vector)
-    
+
     @property
     def mean_square_unit_length(self):
         """The mean square unit length."""
@@ -670,6 +688,18 @@ class PolymerPersistenceDependentDihedral:
     def persistence_length_units(self):
         """The persistence length in repeat units."""
         return self.persistence_length / np.sqrt(self.mean_square_unit_length)
+
+    @property
+    def effective_unit_length_wlc(self):
+        """The effective unit length for a worm-like chain (WLC) model."""
+        if self._G_unit is None:
+            self.build_G_unit()
+        return self.calculate_effective_unit_length_wlc()
+
+    @property
+    def persistence_length_wlc(self):
+        """The persistence length for a worm-like chain (WLC) model."""
+        return self.effective_unit_length_wlc * self.correlation_length
 
     def report(self):
         """Prints a summary of the calculation results."""

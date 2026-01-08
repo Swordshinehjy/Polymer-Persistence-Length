@@ -468,6 +468,25 @@ class PolymerPersistence:
         # Project onto direction of first bond (x axis)
         return R_avg[0]
 
+    def calculate_effective_unit_length_wlc(self):
+        """
+        Calculates the effective unit length for a worm-like chain (WLC) model.
+        This is an approximation for the discrete chain model.
+        """
+        if self._G_unit is None:
+            self.build_G_unit()
+        G = self._G_unit
+        s = G[0, 4]
+        n = G[0, 1:4]
+        p = G[1:4, 4]
+        M = G[1:4, 1:4]
+        I = np.eye(3)
+        a = s + n @ np.linalg.solve(I - M, p) # delta_R2 = 2*Np*alpha^2
+        Np = -1 / np.log(np.max(np.abs(eigvals(M))))
+        alpha_sq = a / (2 * Np)
+        alpha = np.sqrt(alpha_sq)
+        return alpha
+
     def run_calculation(self):
         """
         Runs the full calculation to find the correlation length.
@@ -518,7 +537,7 @@ class PolymerPersistence:
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
         return self.calculate_characteristic_ratio()
-    
+
     @property
     def average_unit_vector(self):
         """The average unit vector."""
@@ -531,7 +550,7 @@ class PolymerPersistence:
     @property
     def average_unit_length(self):
         return np.linalg.norm(self.average_unit_vector)
-    
+
     @property
     def mean_square_unit_length(self):
         """The mean square unit length."""
@@ -558,6 +577,18 @@ class PolymerPersistence:
     def persistence_length_units(self):
         """The persistence length in repeat units."""
         return self.persistence_length / np.sqrt(self.mean_square_unit_length)
+
+    @property
+    def effective_unit_length_wlc(self):
+        """The effective unit length for a worm-like chain (WLC) model."""
+        if self._G_unit is None:
+            self.build_G_unit()
+        return self.calculate_effective_unit_length_wlc()
+
+    @property
+    def persistence_length_wlc(self):
+        """The persistence length for a worm-like chain (WLC) model."""
+        return self.effective_unit_length_wlc * self.correlation_length
 
     def format_subplot(self, xlabel, ylabel, title):
         """Format subplot with consistent styling."""
