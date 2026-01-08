@@ -554,10 +554,7 @@ class PolymerPersistenceDependentDihedral:
         except np.linalg.LinAlgError:
             return np.inf
         delta_R2 = s + n_vec @ inv_I_minus_M @ p
-        p_sq_norm = np.dot(p, p)
-        if p_sq_norm < 1e-12:
-            return 0.0
-        C_inf = delta_R2 / p_sq_norm
+        C_inf = delta_R2 / s
         return C_inf
 
     def calculate_persistence_length(self):
@@ -628,15 +625,6 @@ class PolymerPersistenceDependentDihedral:
         return self._G_unit
 
     @property
-    def average_unit_length(self):
-        """The average unit length."""
-        if self.bond_lengths is None:
-            raise RuntimeError("Bond lengths not set.")
-        if self._G_unit is None:
-            self.build_G_unit()
-        return np.linalg.norm(self._G_unit[1:4, 4])
-
-    @property
     def c_inf(self):
         """The characteristic ratio."""
         if self.bond_lengths is None:
@@ -644,11 +632,33 @@ class PolymerPersistenceDependentDihedral:
         return self.calculate_characteristic_ratio()
 
     @property
+    def average_unit_vector(self):
+        """The average unit vector."""
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        if self._G_unit is None:
+            self.build_G_unit()
+        return self._G_unit[1:4, 4]
+
+    @property
+    def average_unit_length(self):
+        return np.linalg.norm(self.average_unit_vector)
+    
+    @property
+    def mean_square_unit_length(self):
+        """The mean square unit length."""
+        if self.bond_lengths is None:
+            raise RuntimeError("Bond lengths not set.")
+        if self._G_unit is None:
+            self.build_G_unit()
+        return self._G_unit[0, 4]
+
+    @property
     def kuhn_length(self):
         """The Kuhn length."""
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
-        return self.average_unit_length * self.c_inf
+        return self.c_inf * np.sqrt(self.mean_square_unit_length)
 
     @property
     def persistence_length(self):
@@ -659,7 +669,7 @@ class PolymerPersistenceDependentDihedral:
     @property
     def persistence_length_units(self):
         """The persistence length in repeat units."""
-        return self.persistence_length / self.average_unit_length
+        return self.persistence_length / np.sqrt(self.mean_square_unit_length)
 
     def report(self):
         """Prints a summary of the calculation results."""
