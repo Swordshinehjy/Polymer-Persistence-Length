@@ -687,6 +687,9 @@ class PolymerPersistence:
         print(f"Temperature: {self.temperature} K")
         print(f"Max Eigenvalue (lambda_max): {lam:.12f}")
         print(f"Correlation Length: {corr:.6f}")
+        if self.bond_lengths is not None:
+            print(f"Persistence Length (Å): {self.persistence_length:.6f}")
+            print(f"Persistence Length WLC (Å): {self.persistence_length_wlc:.6f}")
         print("-----------------------------------------------")
 
     def generate_chain(self, n_repeat_units):
@@ -1472,10 +1475,7 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
         return corr
 
 
-def compare_persistence_results(models: List[PolymerPersistence],
-                                labels: List[str],
-                                temperature: Union[float, List[float]],
-                                property='corr'):
+def compare_persistence_results(models, labels, temperature, property='corr'):
     '''
     Compare persistence results between different models.
     Arguments:
@@ -1486,14 +1486,25 @@ def compare_persistence_results(models: List[PolymerPersistence],
     '''
     T_arr = np.atleast_1d(temperature).astype(np.float64)
     plt.figure(figsize=(6, 5))
-    for model, label in zip(models, labels):
-        res = model.temperature_scan(T_arr)
-        plt.plot(res['T'], res[property], 'o-', label=label)
-
     plt.xlabel('Temperature (K)', fontsize=16, fontfamily="Helvetica")
     if property == 'corr':
         ylabel = "$N_p$"
-        title = "Correlation length"
+        title = "Correlation length Vs. Temperature"
+        for model, label in zip(models, labels):
+            res = model.temperature_scan(T_arr)
+            plt.plot(res['T'], res[property], 'o-', label=label)
+    elif property == 'lp':
+        ylabel = "Persistence length (Å)"
+        title = "Persistence length Vs. Temperature"
+        for model, label in zip(models, labels):
+            res = model.persistence_length_Tscan(T_arr)
+            plt.plot(res['T'], res[property], 'o-', label=label)
+    elif property == 'lp_wlc':
+        ylabel = "Persistence length (Å)"
+        title = "Persistence length WLC Vs. Temperature"
+        for model, label in zip(models, labels):
+            res = model.persistence_length_Tscan(T_arr)
+            plt.plot(res['T'], res[property], 'o-', label=label)
     else:
         raise ValueError(f"Unknown property: {property}")
     plt.legend()

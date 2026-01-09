@@ -17,4 +17,4 @@ from .relaxed_dihedral_scan import (GaussianLogParser,
                                     generate_dihedral_scan_gjf,
                                     read_gjf_coords)
 
-__version__ = '0.11.3'
+__version__ = '0.11.4'

@@ -604,6 +604,9 @@ class PolymerPersistenceDependentDefelection:
         print(f"Temperature: {self.temperature} K")
         print(f"Max Eigenvalue (lambda_max): {lam:.12f}")
         print(f"Correlation Length: {corr:.6f}")
+        if self.bond_lengths is not None:
+            print(f"Persistence Length (Å): {self.persistence_length:.6f}")
+            print(f"Persistence Length WLC (Å): {self.persistence_length_wlc:.6f}")
         print("-----------------------------------------------")
 
     def report_average_angles(self, round=2):
