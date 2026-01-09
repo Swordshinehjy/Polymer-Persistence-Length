@@ -110,7 +110,7 @@ $$
 l_p = \langle \vec{R} \cdot \hat{t}_0 \rangle = \left[(I - M)^{-1} \vec{p}\right]_0
 $$
 
-where M is the average rotation matrix and p is the average bond vector. This method maps the discrete chain model to the continuous worm-like chain model, facilitating comparison with experimental results and providing another description of polymer chain rigidity.
+where M is the average rotation matrix and p is the average bond vector.
 
 (2) **Worm-Like Chain Approximation Persistence Length**: Defined as the product of effective correlation length and effective unit length obtained using the worm-like chain formula.
 
@@ -160,6 +160,7 @@ See the original paper [Predicting Chain Dimensions of Semiflexible Polymers fro
 ### Update
 *   Add the Monte Carlo sampling method using Cython
 *   Add the rotational isomeric state (RIS) model and the mixed HR-RIS model using the same logic
+
 
 
 
