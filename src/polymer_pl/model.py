@@ -688,8 +688,8 @@ class PolymerPersistence:
         print(f"Max Eigenvalue (lambda_max): {lam:.12f}")
         print(f"Correlation Length: {corr:.6f}")
         if self.bond_lengths is not None:
-            print(f"Persistence Length (Å): {self.persistence_length:.6f}")
-            print(f"Persistence Length WLC (Å): {self.persistence_length_wlc:.6f}")
+            print(f"Persistence Length (Angstroms): {self.persistence_length:.6f}")
+            print(f"Persistence Length WLC (Angstroms): {self.persistence_length_wlc:.6f}")
         print("-----------------------------------------------")
 
     def generate_chain(self, n_repeat_units):
