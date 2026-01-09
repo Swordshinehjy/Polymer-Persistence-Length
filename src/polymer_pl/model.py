@@ -99,6 +99,8 @@ class PolymerPersistence:
         self._G_unit = None
         self._lambda_max = None
         self._correlation_length = None
+        self._correlation_length_wlc = None
+        self._unit_length_wlc = None
         self._computational_data = {}
         self._full_data = {}
         self.fitting_method = fitting_method
@@ -468,24 +470,48 @@ class PolymerPersistence:
         # Project onto direction of first bond (x axis)
         return R_avg[0]
 
-    def calculate_effective_unit_length_wlc(self):
+    def _wormlike_chain_approximation(self):
         """
-        Calculates the effective unit length for a worm-like chain (WLC) model.
-        This is an approximation for the discrete chain model.
+        Calculates the effective unit length (alpha) and effect correlation length (Np)
+        for a WLC model by matching both the asymptotic slope and intercept 
+        of the discrete chain's exact <R^2>.
         """
         if self._G_unit is None:
             self.build_G_unit()
         G = self._G_unit
-        s = G[0, 4]
-        n = G[0, 1:4]
-        p = G[1:4, 4]
-        M = G[1:4, 1:4]
+        # Extract sub-blocks from the Generator Matrix
+        s = G[0, 4]  # scalar: bond length squared term
+        n_vec = G[0, 1:4]  # row vector: related to 2*l*T correlations
+        p_vec = G[1:4, 4]  # col vector: bond vector
+        M = G[1:4, 1:4]  # matrix: rotation/transfer matrix
         I = np.eye(3)
-        a = s + n @ np.linalg.solve(I - M, p) # delta_R2 = 2*Np*alpha^2
-        Np = -1 / np.log(np.max(np.abs(eigvals(M))))
-        alpha_sq = a / (2 * Np)
+        # Calculate (I - M)^-1
+        try:
+            inv_I_M = np.linalg.inv(I - M)
+        except np.linalg.LinAlgError:
+            raise ValueError(
+                "Matrix (I - M) is singular. Chain might be perfectly rigid or linear."
+            )
+        # accurate equation for <R2> = A*N + B + n^T @ (I - M)^-2 @ M^N @ p
+        # delta_R2 = 2*Np*alpha^2 when n -> infinity
+        # A = s + n^T @ (I - M)^-1 @ p (slope)
+        A = s + n_vec @ inv_I_M @ p_vec
+        # intercept = -2* Np * alpha^2 when n -> infinity
+        # B = - n^T @ (I - M)^-2 @ p (intercept)
+        # Note: (I-M)^-2 is inv_I_M @ inv_I_M
+        B = -n_vec @ (inv_I_M @ inv_I_M) @ p_vec
+        if np.abs(A) < 1e-10:
+            return 0.0  # Avoid division by zero for zero-length chains
+        Np = -B / A
+        # decay term n^T @ (I - M)^-2 @ M^N @ p can be accurately described by three eigenvalues
+        # M @ v_i = lambda_i * v_i, u_i^T @ M = lambda_i * u_i^T, u_i^T @ v_i = delta_ij
+        # M^N = ∑ lambda_i^N * v_i * u_i^T
+        # n^T @ (I - M)^-2 @ M^N @ p = ∑ (n^T @ (I - M)^-2 @ v_i)*(u_i^T @ p) * lambda_i^N
+        # alpha = sqrt( A / (2 * Np) )
+        alpha_sq = A / (2 * Np)
         alpha = np.sqrt(alpha_sq)
-        return alpha
+        self._unit_length_wlc = alpha
+        self._correlation_length_wlc = Np
 
     def run_calculation(self):
         """
@@ -581,14 +607,21 @@ class PolymerPersistence:
     @property
     def effective_unit_length_wlc(self):
         """The effective unit length for a worm-like chain (WLC) model."""
-        if self._G_unit is None:
-            self.build_G_unit()
-        return self.calculate_effective_unit_length_wlc()
+        if self._unit_length_wlc is None:
+            self._wormlike_chain_approximation()
+        return self._unit_length_wlc
+
+    @property
+    def correlation_length_wlc(self):
+        """The correlation length for a worm-like chain (WLC) model."""
+        if self._correlation_length_wlc is None:
+            self._wormlike_chain_approximation()
+        return self._correlation_length_wlc
 
     @property
     def persistence_length_wlc(self):
         """The persistence length for a worm-like chain (WLC) model."""
-        return self.effective_unit_length_wlc * self.correlation_length
+        return self.effective_unit_length_wlc * self.correlation_length_wlc
 
     def format_subplot(self, xlabel, ylabel, title):
         """Format subplot with consistent styling."""
@@ -1097,6 +1130,42 @@ class PolymerPersistence:
         # restore original
         self.kTval = kT_orig
         self._calculate_Mmat()
+        return results
+
+    def persistence_length_Tscan(self, T_list, plot=False):
+        """
+        T_list: iterable of temperatures (K)
+        Returns: dict with keys 'T', 'corr', 'Mmat'
+        """
+        Ts = np.asarray(T_list, dtype=np.float64)
+        results = {'T': Ts, 'lp': [], 'lp_wlc': [], 'G_unit': []}
+
+        kT_orig = self.kTval
+        for T in Ts:
+            self.kTval = sc.R * T / 1000.0  # kJ/mol
+            # self._computational_data only restore fitf
+            # fitf is independent of kT
+            try:
+                self._calculate_Mmat()
+                self.build_G_unit()
+                results['lp'].append(self.persistence_length)
+                self._wormlike_chain_approximation()
+                results['lp_wlc'].append(self.persistence_length_wlc)
+                results['G_unit'].append(self._G_unit)
+            except Exception:
+                raise ValueError("Failed to compute generator matrix")
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(Ts, results['lp'], 'bo-', label='Lp')
+            plt.plot(Ts, results['lp_wlc'], 'rD-', label='Lp_wlc')
+            self.format_subplot("Temperature (K)", "Persistence Length (Å)",
+                                "Temperature Scan")
+            plt.show()
+        # restore original
+        self.kTval = kT_orig
+        self._calculate_Mmat()
+        self.build_G_unit()
+        self._wormlike_chain_approximation()
         return results
 
 
