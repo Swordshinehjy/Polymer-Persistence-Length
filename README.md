@@ -93,6 +93,7 @@ $$
 ### Mean Square End-to-End Distance <R²> Calculation
 
 The mean square end-to-end distance can be calculated through powers of the generator matrix:
+
 $$
 \langle R^2 \rangle_n = G_{chain}[0,4] = (G_{unit})^n[0,4]
 $$
@@ -159,6 +160,7 @@ See the original paper [Predicting Chain Dimensions of Semiflexible Polymers fro
 ### Update
 *   Add the Monte Carlo sampling method using Cython
 *   Add the rotational isomeric state (RIS) model and the mixed HR-RIS model using the same logic
+
 
 
 
