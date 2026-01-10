@@ -6,7 +6,7 @@ import scipy.constants as sc
 from numpy.linalg import eigvals
 from scipy.integrate import quad
 from scipy.interpolate import interp1d
-
+from . import tool
 
 class PolymerPersistenceConfined:
     """
@@ -74,14 +74,6 @@ class PolymerPersistenceConfined:
         self._full_data = {}
         self.fitting_method = fitting_method
         self.param_n = param_n
-
-    @staticmethod
-    def _read_ris_data(file_name: Path):
-        delimiter = ',' if file_name.suffix == '.csv' else None
-        data = np.loadtxt(file_name, delimiter=delimiter)
-        data = np.reshape(data, (-1, 2))
-        data = np.unique(data, axis=0)
-        return data[:, 0], data[:, 1]
 
     @staticmethod
     def _update_dihedral(data):
@@ -315,17 +307,7 @@ class PolymerPersistenceConfined:
             return 0.0, 0.0
         return cos_avg / Z, sin_avg / Z
 
-    def _compute_ris_rotation_integrals(self, angles_deg, energies):
-        """Compute rotation integrals for RIS model using discrete states."""
-        angles_rad = np.deg2rad(angles_deg)
-
-        boltzmann_weights = np.exp(-energies / self.kTval)
-        Z = np.sum(boltzmann_weights)
-
-        probabilities = boltzmann_weights / Z
-        m_i = np.sum(probabilities * np.cos(angles_rad))
-        s_i = np.sum(probabilities * np.sin(angles_rad))
-        return m_i, s_i
+    
 
     def _calculate_Mmat(self):
         """Constructs the overall transformation matrix M for the repeat unit."""
@@ -342,7 +324,7 @@ class PolymerPersistenceConfined:
                             risdata = np.asarray(info['data'])
                             angles, energies = risdata[:, 0], risdata[:, 1]
                         elif 'loc' in info:
-                            angles, energies = self._read_ris_data(
+                            angles, energies = tool.read_ris_data(
                                 Path(info['loc']))
                         self.ris_data[ris_id] = (angles, energies)
                     except FileNotFoundError:
@@ -390,8 +372,8 @@ class PolymerPersistenceConfined:
                 else:
                     if ris_id not in ris_cache:
                         angles_deg, energies = self.ris_data[ris_id]
-                        m_i, s_i = self._compute_ris_rotation_integrals(
-                            angles_deg, energies)
+                        m_i, s_i = tool.compute_ris_rotation_integrals(
+                            angles_deg, energies, self.kTval)
                         ris_cache[ris_id] = (m_i, s_i)
                     else:
                         m_i, s_i = ris_cache[ris_id]
@@ -632,19 +614,6 @@ class PolymerPersistenceConfined:
         """The persistence length for a worm-like chain (WLC) model."""
         return self.effective_unit_length_wlc * self.correlation_length_wlc
 
-    def format_subplot(self, xlabel, ylabel, title):
-        """Format subplot with consistent styling."""
-        plt.xlabel(xlabel, fontsize=16, fontfamily="Helvetica")
-        plt.ylabel(ylabel, fontsize=16, fontfamily="Helvetica")
-        plt.xticks(fontsize=14, fontfamily="Helvetica")
-        plt.yticks(fontsize=14, fontfamily="Helvetica")
-        # Add legend only if there are labeled elements
-        if plt.gca().get_legend_handles_labels()[0]:
-            plt.legend(fontsize=14, prop={'family': 'Helvetica'})
-        plt.grid(True, alpha=0.3)
-        plt.minorticks_on()
-        plt.title(title, fontsize=18, fontfamily="Helvetica")
-
     def plot_dihedral_potentials(self):
         """Plot dihedral potentials and their probability distributions."""
         if not self._full_data:
@@ -678,7 +647,7 @@ class PolymerPersistenceConfined:
                                     linestyle='--',
                                     alpha=0.5)
 
-        self.format_subplot("Dihedral Angle [Deg.]",
+        tool.format_subplot("Dihedral Angle [Deg.]",
                             "Dihedral Potential (kJ/mol)",
                             "Dihedral Potentials")
         plt.subplot(1, 2, 2)
@@ -716,7 +685,7 @@ class PolymerPersistenceConfined:
                          linewidth=2,
                          label=data['label'])
 
-        self.format_subplot("Angle [deg.]", "Probability",
+        tool.format_subplot("Angle [deg.]", "Probability",
                             "Probability Distributions")
 
         plt.subplot(1, 2, 1)
@@ -744,8 +713,12 @@ class PolymerPersistenceConfined:
         print(f"Max Eigenvalue (lambda_max): {lam:.12f}")
         print(f"Correlation Length: {corr:.6f}")
         if self.bond_lengths is not None:
-            print(f"Persistence Length (Angstroms): {self.persistence_length:.6f}")
-            print(f"Persistence Length WLC (Angstroms): {self.persistence_length_wlc:.6f}")
+            print(
+                f"Persistence Length (Angstroms): {self.persistence_length:.6f}"
+            )
+            print(
+                f"Persistence Length WLC (Angstroms): {self.persistence_length_wlc:.6f}"
+            )
         print("-----------------------------------------------")
 
     def temperature_scan(self, T_list, plot=False):
@@ -776,7 +749,7 @@ class PolymerPersistenceConfined:
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(Ts, results['corr'], 'o-')
-            self.format_subplot("Temperature (K)", "Correlation Length",
+            tool.format_subplot("Temperature (K)", "Correlation Length",
                                 "Temperature Scan")
             plt.show()
         # restore original
@@ -808,7 +781,7 @@ class PolymerPersistenceConfined:
             plt.figure(figsize=(6, 5))
             plt.plot(Ts, results['lp'], 'bo-', label='Lp')
             plt.plot(Ts, results['lp_wlc'], 'rD-', label='Lp_wlc')
-            self.format_subplot("Temperature (K)", "Persistence Length (Å)",
+            tool.format_subplot("Temperature (K)", "Persistence Length (Å)",
                                 "Temperature Scan")
             plt.show()
         # restore original

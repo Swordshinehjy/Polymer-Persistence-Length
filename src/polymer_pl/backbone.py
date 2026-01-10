@@ -3,7 +3,7 @@ from typing import List, Union
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial import ConvexHull
-
+from . import tool
 
 class PolymerBackbone:
     """
@@ -198,19 +198,6 @@ class PolymerBackbone:
             print(f"Segment {idx}: {angle:.2f} degrees")
         print("------------------------------------------------------")
 
-    def format_subplot(self, xlabel, ylabel, title):
-        """Format subplot with consistent styling."""
-        plt.xlabel(xlabel, fontsize=16, fontfamily="Helvetica")
-        plt.ylabel(ylabel, fontsize=16, fontfamily="Helvetica")
-        plt.xticks(fontsize=14, fontfamily="Helvetica")
-        plt.yticks(fontsize=14, fontfamily="Helvetica")
-        # Add legend only if there are labeled elements
-        if plt.gca().get_legend_handles_labels()[0]:
-            plt.legend(fontsize=14, prop={'family': 'Helvetica'})
-        plt.grid(True, alpha=0.3)
-        plt.minorticks_on()
-        plt.title(title, fontsize=18, fontfamily="Helvetica")
-
     def draw_chain(self, show_bbox=True):
         """
         Draw the polymer chain with optional minimum bounding box.
@@ -236,7 +223,7 @@ class PolymerBackbone:
 
         plt.gca().set_aspect('equal', adjustable='box')
         title = "Polymer Chain with Minimum Bounding Box" if show_bbox else "Polymer Chain"
-        self.format_subplot("x (Å)", "y (Å)", title)
+        tool.format_subplot("x (Å)", "y (Å)", title)
 
     def report(self):
         """Prints a summary of the calculation results."""

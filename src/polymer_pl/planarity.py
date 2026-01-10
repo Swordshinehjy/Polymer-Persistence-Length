@@ -6,7 +6,7 @@ import numpy as np
 import scipy.constants as sc
 from scipy.integrate import quad
 from scipy.interpolate import interp1d
-
+from . import tool
 
 class PolymerPlanarity:
     """
@@ -232,19 +232,6 @@ class PolymerPlanarity:
         )
         print("-" * 90)
 
-    def format_subplot(self, xlabel, ylabel, title):
-        """Format subplot with consistent styling."""
-        plt.xlabel(xlabel, fontsize=16, fontfamily="Helvetica")
-        plt.ylabel(ylabel, fontsize=16, fontfamily="Helvetica")
-        plt.xticks(fontsize=14, fontfamily="Helvetica")
-        plt.yticks(fontsize=14, fontfamily="Helvetica")
-        # Add legend only if there are labeled elements
-        if plt.gca().get_legend_handles_labels()[0]:
-            plt.legend(fontsize=14, prop={'family': 'Helvetica'})
-        plt.grid(True, alpha=0.3)
-        plt.minorticks_on()
-        plt.title(title, fontsize=18, fontfamily="Helvetica")
-
     def plot_dihedral_potentials(self):
         x_values = np.linspace(0, 360, 1000)
         all_data = {}
@@ -283,7 +270,7 @@ class PolymerPlanarity:
                      data['fitf'](x_values),
                      color=f"{data['color']}",
                      linestyle="--")
-        self.format_subplot("Dihedral Angle [Deg.]",
+        tool.format_subplot("Dihedral Angle [Deg.]",
                             "Dihedral Potential (kJ/mol)",
                             "Dihedral Potentials")
         plt.subplot(1, 2, 2)
@@ -299,7 +286,7 @@ class PolymerPlanarity:
                      color=f"{data['color']}",
                      linestyle="-",
                      label=data['label'])
-        self.format_subplot("Angle [deg.]", "Probability",
+        tool.format_subplot("Angle [deg.]", "Probability",
                             "Probability Distributions")
         plt.tight_layout()
         plt.show()
@@ -528,7 +515,7 @@ class PolymerPlanarity:
             for i, (key, ylabel, title) in enumerate(params, 1):
                 plt.subplot(2, 2, i)
                 plt.plot(results['T'], results[key], 'o-')
-                self.format_subplot("Temperature (K)", ylabel, title)
+                tool.format_subplot("Temperature (K)", ylabel, title)
 
             plt.tight_layout()
             plt.show()

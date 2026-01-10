@@ -12,6 +12,7 @@ import scipy.constants as sc
 from joblib import Parallel, delayed
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
+from . import tool
 
 try:
     from . import chain_rotation_fk as chain_fk
@@ -63,7 +64,7 @@ class PolymerPersistenceFK:
                         risdata = np.asarray(info['data'])
                         angles, energies = risdata[:, 0], risdata[:, 1]
                     elif 'loc' in info:
-                        angles, energies = self._read_ris_data(
+                        angles, energies = tool.read_ris_data(
                             Path(info['loc']))
                     self.ris_data[ris_id] = (angles, energies)
                 except FileNotFoundError:
@@ -96,13 +97,7 @@ class PolymerPersistenceFK:
                 combined = combined[np.argsort(combined[:, 0])]
             return combined
 
-    @staticmethod
-    def _read_ris_data(file_name: Path):
-        delimiter = ',' if file_name.suffix == '.csv' else None
-        data = np.loadtxt(file_name, delimiter=delimiter)
-        data = np.reshape(data, (-1, 2))
-        data = np.unique(data, axis=0)
-        return data[:, 0], data[:, 1]
+
 
     def _read_data(self, file_name: Path):
         """Read and process dihedral angle data from a file."""
@@ -202,7 +197,7 @@ class PolymerPersistenceFK:
                      data['fitf'](data['x_values']),
                      color=f"{data['color']}",
                      linestyle="--")
-        self.format_subplot("Dihedral Angle [Deg.]",
+        tool.format_subplot("Dihedral Angle [Deg.]",
                             "Dihedral Potential (kJ/mol)",
                             "Dihedral Potentials")
         plt.subplot(1, 3, 2)
@@ -212,7 +207,7 @@ class PolymerPersistenceFK:
                      color=f"{data['color']}",
                      linestyle="-",
                      label=data['label'])
-        self.format_subplot("Angle [deg.]", "Probability",
+        tool.format_subplot("Angle [deg.]", "Probability",
                             "Probability Distributions")
         plt.subplot(1, 3, 3)
         for key, data in self._full_data.items():
@@ -221,24 +216,11 @@ class PolymerPersistenceFK:
                      color=f"{data['color']}",
                      linestyle="-",
                      label=data['label'])
-        self.format_subplot("Probability", "Dihedral Angle [deg.]",
+        tool.format_subplot("Probability", "Dihedral Angle [deg.]",
                             "Cumulative Probability Distributions")
 
         plt.tight_layout()
         plt.show()
-
-    def format_subplot(self, xlabel, ylabel, title):
-        """Format subplot with consistent styling."""
-        plt.xlabel(xlabel, fontsize=16, fontfamily="Helvetica")
-        plt.ylabel(ylabel, fontsize=16, fontfamily="Helvetica")
-        plt.xticks(fontsize=14, fontfamily="Helvetica")
-        plt.yticks(fontsize=14, fontfamily="Helvetica")
-        # Add legend only if there are labeled elements
-        if plt.gca().get_legend_handles_labels()[0]:
-            plt.legend(fontsize=14, prop={'family': 'Helvetica'})
-        plt.grid(True, alpha=0.3)
-        plt.minorticks_on()
-        plt.title(title, fontsize=18, fontfamily="Helvetica")
 
     def pre_generate_angles(self, n_samples, n_total_bonds):
         """
@@ -434,7 +416,7 @@ class PolymerPersistenceFK:
                  linewidth=2,
                  alpha=0.7,
                  label=f'zeta = {corr_length:.5f}')
-        self.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
+        tool.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
                             "Log of Correlation Function")
         plt.show()
 
@@ -550,7 +532,7 @@ class PolymerPersistenceFK:
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(np.arange(n_repeat_units + 1), r2, 'bo-')
-            self.format_subplot("Number of Repeat Units (N)",
+            tool.format_subplot("Number of Repeat Units (N)",
                                 "Mean Square End-to-End Distance (Å²)",
                                 "Forward Kinetics Simulation of <R²>")
             plt.show()
@@ -618,7 +600,7 @@ class PolymerPersistenceFK:
             plt.plot(bin_centers, hist, 'b-', lw=2)
             xlabel = r"$R^2$ ($\mathrm{\AA}^2$)" if use_r2 else r"$R$ ($\mathrm{\AA}$)"
             ylabel = "Probability Density" if density else "Counts"
-            self.format_subplot(xlabel, ylabel,
+            tool.format_subplot(xlabel, ylabel,
                                 "End-to-End Distance Distribution")
             plt.show()
 

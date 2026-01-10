@@ -7,7 +7,7 @@ from numpy.linalg import eigvals
 from scipy.integrate import dblquad, quad
 from scipy.interpolate import (RectBivariateSpline, RegularGridInterpolator,
                                interp1d)
-
+from . import tool
 
 class PolymerPersistenceDependentDihedral:
     """
@@ -136,14 +136,6 @@ class PolymerPersistenceDependentDihedral:
         phi = np.linspace(0, 360, data.shape[0])
         psi = np.linspace(0, 360, data.shape[1])
         return phi, psi, data
-
-    @staticmethod
-    def _read_ris_data(file_name: Path):
-        delimiter = ',' if file_name.suffix == '.csv' else None
-        data = np.loadtxt(file_name, delimiter=delimiter)
-        data = np.reshape(data, (-1, 2))
-        data = np.unique(data, axis=0)
-        return data[:, 0], data[:, 1]
 
     @staticmethod
     def _update_dihedral(data):
@@ -389,18 +381,6 @@ class PolymerPersistenceDependentDihedral:
 
         return cos_phi_avg, sin_phi_avg, cos_psi_avg, sin_psi_avg
 
-    def _compute_ris_rotation_integrals(self, angles_deg, energies):
-        """Compute rotation integrals for RIS model using discrete states."""
-        angles_rad = np.deg2rad(angles_deg)
-
-        boltzmann_weights = np.exp(-energies / self.kTval)
-        Z = np.sum(boltzmann_weights)
-
-        probabilities = boltzmann_weights / Z
-        m_i = np.sum(probabilities * np.cos(angles_rad))
-        s_i = np.sum(probabilities * np.sin(angles_rad))
-        return m_i, s_i
-
     def _calculate_Mmat(self):
         """Constructs the overall transformation matrix M for the repeat unit."""
         self._prepare_computational_data()
@@ -416,7 +396,7 @@ class PolymerPersistenceDependentDihedral:
                             risdata = np.asarray(info['data'])
                             angles, energies = risdata[:, 0], risdata[:, 1]
                         elif 'loc' in info:
-                            angles, energies = self._read_ris_data(
+                            angles, energies = tool.read_ris_data(
                                 Path(info['loc']))
                         self.ris_data[ris_id] = (angles, energies)
                     except FileNotFoundError:
@@ -482,8 +462,8 @@ class PolymerPersistenceDependentDihedral:
                 else:
                     if ris_id not in ris_cache:
                         angles_deg, energies = self.ris_data[ris_id]
-                        m_i, s_i = self._compute_ris_rotation_integrals(
-                            angles_deg, energies)
+                        m_i, s_i = tool.compute_ris_rotation_integrals(
+                            angles_deg, energies, self.kTval)
                         ris_cache[ris_id] = (m_i, s_i)
                     else:
                         m_i, s_i = ris_cache[ris_id]
@@ -735,8 +715,12 @@ class PolymerPersistenceDependentDihedral:
         print(f"Correlation Length: {corr:.6f}")
         if self.bond_lengths is not None:
             print(f"Average unit length: {self.average_unit_length:.6f} Å")
-            print(f"Persistence Length (Angstroms): {self.persistence_length:.6f}")
-            print(f"Persistence Length WLC (Angstroms): {self.persistence_length_wlc:.6f}")
+            print(
+                f"Persistence Length (Angstroms): {self.persistence_length:.6f}"
+            )
+            print(
+                f"Persistence Length WLC (Angstroms): {self.persistence_length_wlc:.6f}"
+            )
         print(f"Number of coupled dihedral pairs: {len(self.coupled_pairs)}")
         print("-----------------------------------------------")
 
@@ -982,19 +966,6 @@ class PolymerPersistenceDependentDihedral:
         return (r["cos_phi"][0], r["sin_phi"][0], r["cos_psi"][0],
                 r["sin_psi"][0])
 
-    def format_subplot(self, xlabel, ylabel, title):
-        """Format subplot with consistent styling."""
-        plt.xlabel(xlabel, fontsize=16, fontfamily="Helvetica")
-        plt.ylabel(ylabel, fontsize=16, fontfamily="Helvetica")
-        plt.xticks(fontsize=14, fontfamily="Helvetica")
-        plt.yticks(fontsize=14, fontfamily="Helvetica")
-        # Add legend only if there are labeled elements
-        if plt.gca().get_legend_handles_labels()[0]:
-            plt.legend(fontsize=14, prop={'family': 'Helvetica'})
-        plt.grid(True, alpha=0.3)
-        plt.minorticks_on()
-        plt.title(title, fontsize=18, fontfamily="Helvetica")
-
     def temperature_scan(self, T_list, plot=False):
         """
         Computes the rotation integrals for a list of temperatures and
@@ -1032,7 +1003,7 @@ class PolymerPersistenceDependentDihedral:
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(Ts, results['corr'], 'o-')
-            self.format_subplot("Temperature (K)", "Correlation Length",
+            tool.format_subplot("Temperature (K)", "Correlation Length",
                                 "Temperature Scan")
             plt.show()
         # restore original
@@ -1065,7 +1036,7 @@ class PolymerPersistenceDependentDihedral:
             plt.figure(figsize=(6, 5))
             plt.plot(Ts, results['lp'], 'bo-', label='Lp')
             plt.plot(Ts, results['lp_wlc'], 'rD-', label='Lp_wlc')
-            self.format_subplot("Temperature (K)", "Persistence Length (Å)",
+            tool.format_subplot("Temperature (K)", "Persistence Length (Å)",
                                 "Temperature Scan")
             plt.show()
         # restore original
