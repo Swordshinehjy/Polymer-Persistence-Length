@@ -1,5 +1,5 @@
 from . import (backbone, chain_rotation, deflection, model, model_confined,
-               model_dependent, model_dihedral, model_fk, planarity,
+               model_dependent, model_dihedral, model_fk, planarity, model_multi,
                relaxed_dihedral_scan, tool)
 from .backbone import PolymerBackbone
 from .model import PolymerPersistence
@@ -7,6 +7,7 @@ from .model_confined import PolymerPersistenceConfined
 from .model_dependent import PolymerPersistenceDependentDefelection
 from .model_dihedral import PolymerPersistenceDependentDihedral
 from .model_fk import PolymerPersistenceFK
+from .model_multi import PolymerPersistenceMulti
 from .planarity import PolymerPlanarity, compare_planarity_results
 from .relaxed_dihedral_scan import (GaussianLogParser,
                                     XYZDeflectionAngleCalculator,
@@ -19,4 +20,4 @@ from .tool import (compare_persistence_results,
                    compute_persistence_terpolymer_Tscan, inverse_data,
                    format_subplot, read_ris_data)
 
-__version__ = '0.11.5'
+__version__ = '0.11.6'

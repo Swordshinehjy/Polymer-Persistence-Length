@@ -1,10 +1,4 @@
-"""
-Optimized PolymerPersistence class using forward kinematics.
-This version directly computes unit vectors without building and rotating a straight chain.
-"""
-
 from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import psutil
@@ -13,7 +7,6 @@ from joblib import Parallel, delayed
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from . import tool
-
 try:
     from . import chain_rotation_fk as chain_fk
 except ImportError:
@@ -64,8 +57,8 @@ class PolymerPersistenceFK:
                         risdata = np.asarray(info['data'])
                         angles, energies = risdata[:, 0], risdata[:, 1]
                     elif 'loc' in info:
-                        angles, energies = tool.read_ris_data(
-                            Path(info['loc']))
+                        angles, energies = tool.read_ris_data(Path(
+                            info['loc']))
                     self.ris_data[ris_id] = (angles, energies)
                 except FileNotFoundError:
                     print(
@@ -96,8 +89,6 @@ class PolymerPersistenceFK:
                 combined = np.vstack((combined, [360.0, energy0]))
                 combined = combined[np.argsort(combined[:, 0])]
             return combined
-
-
 
     def _read_data(self, file_name: Path):
         """Read and process dihedral angle data from a file."""
@@ -332,7 +323,7 @@ class PolymerPersistenceFK:
 
         print(f"\nOptimized Monte Carlo Result:")
         print(f"Slope: {p[1]:.6f}")
-        print(f"Correlation Length: {corr_length:.2f} repeat units")
+        print(f"Correlation Length: {corr_length:.6f}")
 
         return corr_length
 
@@ -415,7 +406,7 @@ class PolymerPersistenceFK:
                  'b--',
                  linewidth=2,
                  alpha=0.7,
-                 label=f'zeta = {corr_length:.5f}')
+                 label=f'zeta = {corr_length:.6f}')
         tool.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
                             "Log of Correlation Function")
         plt.show()
@@ -585,7 +576,6 @@ class PolymerPersistenceFK:
             r2_results = np.vstack(r2_results)
             # R^2 for full chain
             r2_full = r2_results[:, -1]
-
         else:
             all_chains = self.build_all_chains_no_cython(
                 n_samples, n_repeat_units, all_angles)

@@ -1017,7 +1017,7 @@ class PolymerPersistenceDependentDihedral:
         T_list: iterable of temperatures (K)
         Returns: dict with keys 'T', 'corr', 'Mmat'
         """
-        Ts = np.asarray(T_list, dtype=np.float64)
+        Ts = np.atleast_1d(T_list).astype(np.float64)
         results = {'T': Ts, 'lp': [], 'lp_wlc': [], 'G_unit': []}
 
         kT_orig = self.kTval

@@ -303,3 +303,8 @@ def batch_end_to_end(const double[:] bond_lengths,
             results_view[i, j] = dx*dx + dy*dy + dz*dz
     
     return results
+
+
+# -----------------------------------------------------------------------------
+# MULTI-UNIT / COPOLYMER IMPLEMENTATION
+# -----------------------------------------------------------------------------
