@@ -8,6 +8,7 @@ from scipy.integrate import quad
 from scipy.interpolate import interp1d
 from . import tool
 
+
 class PolymerPlanarity:
     """
     Calculates the correlation length of a polymer planarity based on its
@@ -364,12 +365,6 @@ class PolymerPlanarity:
                 im = plt.contour(X, Y, p_matrix, levels=10, cmap=cmap)
             else:
                 raise ValueError(f"plot_type not supported: {plot_type}")
-
-            plt.xlabel("Dihedral Angle (deg.)", fontsize=14)
-            plt.ylabel("Temperature (K)", fontsize=14)
-            plt.title(f"Boltzmann Distribution {label}", fontsize=16)
-
-            # Add colorbar
             cbar = plt.colorbar(im)
             cbar.set_label("Probability", fontsize=14, fontfamily="Helvetica")
             cbar.ax.tick_params(labelsize=14)
@@ -381,7 +376,8 @@ class PolymerPlanarity:
                 plt.xlim(0, 360)
                 plt.ylim(T_range[0], T_range[-1])
 
-            plt.tight_layout()
+            tool.format_subplot("Dihedral Angle (deg.)", "Temperature (K)",
+                                f"Boltzmann Distribution {label}")
             plt.show()
 
     def temperature_scan(self, T_range, plot=False, num_points=2000):
@@ -540,23 +536,11 @@ def compare_planarity_results(models: List[PolymerPlanarity],
     for model, label in zip(models, labels):
         res = model.temperature_scan(T_arr)
         plt.plot(res['T'], res[property], 'o-', label=label)
-
-    plt.xlabel('Temperature (K)', fontsize=16, fontfamily="Helvetica")
-
     if property == 'planarity_corr_length':
         ylabel = r"-1/log(<|cos$\phi$|>)"
         title = "Planarity Correlation Length"
     elif property == 'cos2':
         ylabel = r"<cos²$\phi$>"
         title = "Average Cosine Square"
-    plt.legend()
-    plt.ylabel(ylabel, fontsize=16, fontfamily="Helvetica")
-    plt.xticks(fontsize=14, fontfamily="Helvetica")
-    plt.yticks(fontsize=14, fontfamily="Helvetica")
-    if plt.gca().get_legend_handles_labels()[0]:
-        plt.legend(fontsize=14, prop={'family': 'Helvetica'})
-    plt.grid(True, alpha=0.3)
-    plt.minorticks_on()
-    plt.title(title, fontsize=18, fontfamily="Helvetica")
-    plt.tight_layout()
+    tool.format_subplot('Temperature (K)', ylabel, title)
     plt.show()
