@@ -1,6 +1,6 @@
 from . import (backbone, chain_rotation, deflection, model, model_confined,
-               model_dependent, model_dihedral, model_fk, planarity, model_multi,
-               relaxed_dihedral_scan, tool)
+               model_dependent, model_dihedral, model_fk, planarity,
+               model_multi, relaxed_dihedral_scan, tool)
 from .backbone import PolymerBackbone
 from .model import PolymerPersistence
 from .model_confined import PolymerPersistenceConfined
@@ -18,6 +18,7 @@ from .tool import (compare_persistence_results,
                    compute_persistence_alternating,
                    compute_persistence_terpolymer,
                    compute_persistence_terpolymer_Tscan, inverse_data,
-                   format_subplot, read_ris_data)
+                   format_subplot, read_ris_data, compute_r2_terpolymer_Tscan,
+                   compute_lp_terpolymer_Tscan)
 
-__version__ = '0.11.6'
+__version__ = '0.11.8'

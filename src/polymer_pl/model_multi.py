@@ -14,11 +14,11 @@ from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from . import tool
 from itertools import chain
-# try:
-#     from . import chain_rotation_fk as chain_fk
-# except ImportError:
-#     print("Warning: chain_rotation_fk module not found.")
-#     chain_fk = None
+try:
+    from . import chain_rotation_fk as chain_fk
+except ImportError:
+    print("Warning: chain_rotation_fk module not found.")
+    chain_fk = None
 class PolymerPersistenceMulti():
     """
     Multicomponent system using Forward Kinematics.
@@ -57,9 +57,9 @@ class PolymerPersistenceMulti():
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
         self.ris_labels = ris_labels
         self.ris_types = ris_types
+        self.ris_data = {}
         if self.ris_types is not None:
             self.ris_types = [np.array(ris) for ris in self.ris_types]
-            self.ris_data = {}
             for ris_id, info in self.ris_labels.items():
                 try:
                     if 'data' in info:
@@ -323,99 +323,294 @@ class PolymerPersistenceMulti():
         r2 = np.sum(all_coords**2, axis=2)
         return np.mean(r2, axis=0)
 
+
+    def _prepare_cython_data(self):
+        """
+        Prepare all data structures needed for Cython batch processing.
+        This should be called once after initialization.
+        
+        Returns:
+        --------
+        dict containing all prepared data arrays
+        """
+        if not self._full_data:
+            self._prepare_full_data()
+        
+        # 1. Prepare rotation CDF data (skip rotation type 0 - that means use RIS)
+        rotation_ids = sorted([rid for rid in self._full_data.keys() if rid != 0])
+        
+        if not rotation_ids:
+            # If no rotation types, create dummy data
+            max_cdf_size = 2
+            n_rot_types = 1
+            rotation_cdf_x = np.zeros((max_cdf_size, n_rot_types), dtype=np.float64)
+            rotation_cdf_y = np.zeros((max_cdf_size, n_rot_types), dtype=np.float64)
+            rotation_cdf_indices = np.zeros((n_rot_types, 2), dtype=np.int32)
+            rotation_id_map = {}
+        else:
+            max_cdf_size = max(len(self._full_data[rid]['x_values']) 
+                            for rid in rotation_ids)
+            n_rot_types = len(rotation_ids)
+            
+            rotation_cdf_x = np.zeros((max_cdf_size, n_rot_types), dtype=np.float64)
+            rotation_cdf_y = np.zeros((max_cdf_size, n_rot_types), dtype=np.float64)
+            rotation_cdf_indices = np.zeros((n_rot_types, 2), dtype=np.int32)
+            
+            for idx, rot_id in enumerate(rotation_ids):
+                x_vals = self._full_data[rot_id]['x_values']
+                cdf_vals = self._full_data[rot_id]['cum_dist']
+                cdf_normalized = cdf_vals / cdf_vals[-1]
+                
+                n = len(x_vals)
+                rotation_cdf_x[:n, idx] = x_vals
+                rotation_cdf_y[:n, idx] = cdf_normalized
+                rotation_cdf_indices[idx, 0] = 0
+                rotation_cdf_indices[idx, 1] = n
+            
+            rotation_id_map = {rid: idx for idx, rid in enumerate(rotation_ids)}
+        
+        # 2. Prepare RIS data (if exists)
+        if self.ris_types is not None and self.ris_data:
+            ris_ids = sorted(self.ris_data.keys())
+            max_ris_size = max(len(self.ris_data[rid][0]) for rid in ris_ids)
+            n_ris_types = len(ris_ids)
+            
+            ris_angles = np.zeros((max_ris_size, n_ris_types), dtype=np.float64)
+            ris_probs = np.zeros((max_ris_size, n_ris_types), dtype=np.float64)
+            ris_angle_indices = np.zeros((n_ris_types, 2), dtype=np.int32)
+            
+            for idx, ris_id in enumerate(ris_ids):
+                ang_deg, energies = self.ris_data[ris_id]
+                boltz = np.exp(-energies / self.kTval)
+                prob = boltz / boltz.sum()
+                
+                n = len(ang_deg)
+                ris_angles[:n, idx] = ang_deg
+                ris_probs[:n, idx] = prob
+                ris_angle_indices[idx, 0] = 0
+                ris_angle_indices[idx, 1] = n
+            
+            ris_id_map = {rid: idx for idx, rid in enumerate(ris_ids)}
+        else:
+            # Dummy arrays if no RIS
+            ris_angles = np.zeros((1, 1), dtype=np.float64)
+            ris_probs = np.zeros((1, 1), dtype=np.float64)
+            ris_angle_indices = np.zeros((1, 2), dtype=np.int32)
+            ris_id_map = {}
+        
+        return {
+            'rotation_cdf_indices': rotation_cdf_indices,
+            'rotation_cdf_x': rotation_cdf_x,
+            'rotation_cdf_y': rotation_cdf_y,
+            'ris_angle_indices': ris_angle_indices,
+            'ris_angles': ris_angles,
+            'ris_probs': ris_probs,
+            'rotation_id_map': rotation_id_map,
+            'ris_id_map': ris_id_map
+        }
+
+    def _remap_rotation_types(self, rotation_types_list, rotation_id_map, ris_id_map):
+        """
+        Remap rotation and RIS type IDs to contiguous indices for Cython.
+        
+        Logic: 
+        - If rotation_type == 0, check ris_type (handle in Cython)
+        - If rotation_type != 0, map to contiguous index for CDF lookup
+        - Keep rotation_type == 0 as is (don't remap to -1)
+        """
+        remapped_rotation = []
+        remapped_ris = [] if self.ris_types is not None else None
+        
+        for i, rot_types in enumerate(rotation_types_list):
+            remapped_rot = np.zeros(len(rot_types), dtype=np.int32)
+            
+            for j, rt in enumerate(rot_types):
+                if rt == 0:
+                    # Keep as 0, will be handled specially in Cython
+                    remapped_rot[j] = 0
+                else:
+                    # Map to contiguous index (add 1 to avoid conflict with 0)
+                    if rt in rotation_id_map:
+                        remapped_rot[j] = rotation_id_map[rt] + 1
+                    else:
+                        raise ValueError(f"Rotation type {rt} not found in rotation_labels")
+            
+            remapped_rotation.append(remapped_rot)
+            
+            # Map RIS types
+            if self.ris_types is not None:
+                ris_types = self.ris_types[i]
+                remapped_ris_unit = np.zeros(len(ris_types), dtype=np.int32)
+                
+                for j, ris_t in enumerate(ris_types):
+                    if ris_t in ris_id_map:
+                        # Map to contiguous index (add 1 to avoid conflict with 0)
+                        remapped_ris_unit[j] = ris_id_map[ris_t] + 1
+                    else:
+                        # 0 or not found means no RIS
+                        remapped_ris_unit[j] = 0
+                
+                remapped_ris.append(remapped_ris_unit)
+        
+        return remapped_rotation, remapped_ris
+
     def calculate_correlation_length_mc(self,
                                         n_repeat_units=20,
                                         n_samples=150000,
                                         return_data=False,
                                         plot=False,
-                                        # use_cython=True
-                                        ):
+                                        use_cython=True):
         """
-        Optimized Monte Carlo calculation using forward kinematics.
-        Returns:
-        --------
-        float: Correlation length
+        Optimized Monte Carlo calculation using forward kinematics for multi-component chains.
         """
-        # TODO: cython implementation
-        # if chain_fk is None:
-        #     print("Warning: chain_rotation_fk Cython module not available.")
-        #     use_cython = False
 
-        # if use_cython:
-        #     print(f"Calculating correlations using Cython...")
-        #     (f_len, f_ang, off, sizes, seqs,
-        #      dihedrals) = self._prepare_cython_inputs(n_samples,
-        #                                               n_repeat_units)
-        #     corr_results = chain_fk.batch_correlation_fk_multi(
-        #         f_len, f_ang, off, sizes, seqs, dihedrals)
-        #     corr_mean = np.mean(corr_results, axis=0)
-        # else:
-        print("Calculating correlations using Python...")
-        corr_mean = self.cosVals_no_cython(n_samples, n_repeat_units)
+        if chain_fk is None:
+            print("Warning: chain_rotation_fk Cython module not available.")
+            use_cython = False
+        
+        if use_cython and chain_fk is not None:
+            print(f"Calculating correlations using Cython...")
+            
+            # Prepare data for Cython
+            cython_data = self._prepare_cython_data()
+            remapped_rotation, remapped_ris = self._remap_rotation_types(
+                self.rotation_types, 
+                cython_data['rotation_id_map'],
+                cython_data['ris_id_map']
+            )
+            
+            # Split work across CPU cores
+            n_jobs = psutil.cpu_count(logical=False)
+            samples_per_job = n_samples // n_jobs
+            
+            print(f"Using {n_jobs} CPU cores, {samples_per_job} samples per core...")
+            
+            def run_batch(n_samp):
+                return chain_fk.batch_correlation_fk_multi(
+                    self.bond_lengths,
+                    self.bond_angles_rad,
+                    np.array(self.probs, dtype=np.float64),
+                    cython_data['rotation_cdf_indices'],
+                    cython_data['rotation_cdf_x'],
+                    cython_data['rotation_cdf_y'],
+                    remapped_rotation,
+                    remapped_ris,
+                    cython_data['ris_angle_indices'],
+                    cython_data['ris_angles'],
+                    cython_data['ris_probs'],
+                    n_samp,
+                    n_repeat_units
+                )
+            
+            corr_results = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(run_batch)(samples_per_job) for _ in range(n_jobs)
+            )
+            
+            corr_results = np.vstack(corr_results)
+            corr_mean = np.mean(corr_results, axis=0)
+        else:
+            print("Calculating correlations using Python...")
+            corr_mean = self.cosVals_no_cython(n_samples, n_repeat_units)
+        
         repeat_units = np.arange(1, len(corr_mean) + 1)
-
+        
         # Fit exponential decay
         start_idx = 0
         end_idx = min(10, len(corr_mean))
-
-        # Log-linear fit
+        
         valid_mask = corr_mean[start_idx:end_idx] > 0
         if not np.any(valid_mask):
             print("Warning: No positive correlation values for fitting.")
             return np.inf
-
+        
         x_fit = repeat_units[start_idx:end_idx][valid_mask]
         y_fit = np.log(corr_mean[start_idx:end_idx][valid_mask])
-
+        
         p = np.polynomial.polynomial.polyfit(x_fit, y_fit, 1)
         corr_length = -1 / p[1] if p[1] != 0 else np.inf
+        
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(x_fit, y_fit, 'bo', label='Log Correlation')
             plt.plot(x_fit,
-                     np.polynomial.polynomial.polyval(x_fit, p),
-                     'b--',
-                     linewidth=2,
-                     alpha=0.7,
-                     label=f'zeta = {corr_length:.6f}')
-            tool.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
-                                "Log of Correlation Function")
+                    np.polynomial.polynomial.polyval(x_fit, p),
+                    'b--',
+                    linewidth=2,
+                    alpha=0.7,
+                    label=f'zeta = {corr_length:.6f}')
+            plt.xlabel("Repeat Units")
+            plt.ylabel(r'Ln[$<V_0 \cdot V_n>$]')
+            plt.title("Log of Correlation Function")
+            plt.legend()
+            plt.grid(True, alpha=0.3)
             plt.show()
         else:
             print(f"\nOptimized Monte Carlo Result:")
             print(f"Slope: {p[1]:.6f}")
             print(f"Correlation Length: {corr_length:.6f}")
+        
         if return_data:
             return corr_length
-
+        
     def calc_mean_square_end_to_end_distance(self,
-                                             n_repeat_units=20,
-                                             n_samples=150000,
-                                             return_data=False,
-                                             plot=False,
-                                            #  use_cython=True
-                                             ):
-        """Plot correlation function using FK method."""
-        # TODO: cython implementation
-        # if chain_fk is None:
-        #     print("Warning: chain_rotation_fk Cython module not available.")
-        #     use_cython = False
+                                            n_repeat_units=20,
+                                            n_samples=150000,
+                                            return_data=False,
+                                            plot=False,
+                                            use_cython=True):
+        """Calculate end-to-end distance for multi-component chains."""
 
-        # if use_cython:
-        #     (flat_len, flat_ang, offsets, sizes, seqs,
-        #      dihedrals) = self._prepare_cython_inputs(n_samples,
-        #                                               n_repeat_units)
-        #     r2_results = chain_fk.batch_end_to_end_multi(
-        #         flat_len, flat_ang, offsets, sizes, seqs, dihedrals)
-        #     r2 = np.mean(r2_results, axis=0)
-        # else:
-        r2 = self.r2_no_cython(n_samples, n_repeat_units)
+        if chain_fk is None:
+            print("Warning: chain_rotation_fk Cython module not available.")
+            use_cython = False
+        
+        if use_cython and chain_fk is not None:
+            print(f"Calculating R² using Cython...")
+            
+            cython_data = self._prepare_cython_data()
+            remapped_rotation, remapped_ris = self._remap_rotation_types(
+                self.rotation_types,
+                cython_data['rotation_id_map'],
+                cython_data['ris_id_map']
+            )
+            
+            n_jobs = psutil.cpu_count(logical=False)
+            samples_per_job = n_samples // n_jobs
+            
+            def run_batch(n_samp):
+                return chain_fk.batch_end_to_end_multi(
+                    self.bond_lengths,
+                    self.bond_angles_rad,
+                    np.array(self.probs, dtype=np.float64),
+                    cython_data['rotation_cdf_indices'],
+                    cython_data['rotation_cdf_x'],
+                    cython_data['rotation_cdf_y'],
+                    remapped_rotation,
+                    remapped_ris,
+                    cython_data['ris_angle_indices'],
+                    cython_data['ris_angles'],
+                    cython_data['ris_probs'],
+                    n_samp,
+                    n_repeat_units
+                )
+            
+            r2_results = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(run_batch)(samples_per_job) for _ in range(n_jobs)
+            )
+            
+            r2_results = np.vstack(r2_results)
+            r2 = np.mean(r2_results, axis=0)
+        else:
+            r2 = self.r2_no_cython(n_samples, n_repeat_units)
+        
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(np.arange(n_repeat_units + 1), r2, 'bo-')
-            tool.format_subplot("Number of Repeat Units (N)",
-                                "Mean Square End-to-End Distance (Å²)",
-                                "Forward Kinetics Simulation of <R²>")
+            plt.xlabel("Number of Repeat Units (N)")
+            plt.ylabel("Mean Square End-to-End Distance (Ų)")
+            plt.title("Forward Kinematics Simulation of <R²>")
+            plt.grid(True, alpha=0.3)
             plt.show()
+        
         if return_data:
             return r2
