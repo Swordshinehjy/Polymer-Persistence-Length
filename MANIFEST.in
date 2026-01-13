@@ -1,0 +1,2 @@
+include src/polymer_pl/*.pyx
+recursive-include src *.pyx
