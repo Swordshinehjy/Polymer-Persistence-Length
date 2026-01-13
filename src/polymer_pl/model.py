@@ -96,6 +96,7 @@ class PolymerPersistence:
         self._Mmat = None
         self._A_list = None
         self._G_unit = None
+        self._G_free_unit = None
         self._lambda_max = None
         self._correlation_length = None
         self._correlation_length_wlc = None
@@ -449,6 +450,7 @@ class PolymerPersistence:
             M = G[0:3, 0:3]
             p = G[0:3, 3]
             try:
+                # p + M @ p + M^2 @ p + ...  = (I - M)^-1 @ p
                 R_avg = np.linalg.solve(np.eye(3) - M, p)
                 lp = np.dot(R_avg, p) / np.linalg.norm(p)
             except np.linalg.LinAlgError:
@@ -459,7 +461,6 @@ class PolymerPersistence:
             return np.inf
         else:
             return np.mean(lp)
-
 
     def _wormlike_chain_approximation(self):
         """
@@ -676,6 +677,7 @@ class PolymerPersistence:
             print(
                 f"Persistence Length WLC (Angstroms): {self.persistence_length_wlc:.6f}"
             )
+            print(f"Conformational Parameter: {self.conformational_param:.6f}")
         print("-----------------------------------------------")
 
     def generate_chain(self, n_repeat_units):
@@ -1156,3 +1158,64 @@ class PolymerPersistence:
         self.build_G_unit()
         self._wormlike_chain_approximation()
         return results
+
+    def build_G_free_unit(self):
+        """
+        calculate the generator matrix for all freely rotating bonds, independent of temperature
+        """
+        A_list = []
+        num_bonds = len(self.rotation_types)
+        for i in range(num_bonds):
+            rot_id = int(self.rotation_types[i])
+            theta = float(self.bond_angles_rad[i])
+            c, s = np.cos(theta), np.sin(theta)
+            if rot_id == 0:
+                R_z = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1]])
+                A_list.append(R_z)
+            else:
+                A_list.append(
+                    np.array([[c, 0, 0.0], [s, 0, 0.0], [0.0, 0.0, 0]]))
+        G_free = np.eye(5)
+        for i in range(num_bonds):
+            l_vec = np.array([self.bond_lengths[i], 0.0, 0.0])
+            l_sq = self.bond_lengths[i]**2
+            next_idx = (i + 1) % num_bonds
+            T_next = A_list[next_idx]
+            G_i = np.zeros((5, 5))
+            G_i[0, 0] = 1.0
+            G_i[0, 1:4] = 2 * l_vec.T @ T_next
+            G_i[0, 4] = l_sq
+            G_i[1:4, 1:4] = T_next
+            G_i[1:4, 4] = l_vec
+            G_i[4, 4] = 1.0
+            G_free = G_free @ G_i
+        self._G_free_unit = G_free
+
+    @property
+    def conformational_param(self):
+        """
+        sigma = sqrt(<R^2>/<R^2>_free) with infinite chain length
+        """
+        if self._G_unit is None:
+            self.build_G_unit()
+        G = self._G_unit
+        s = G[0, 4]
+        n = G[0, 1:4]
+        p = G[1:4, 4]
+        M = G[1:4, 1:4]
+        if self._G_free_unit is None:
+            self.build_G_free_unit()
+        G_free = self._G_free_unit
+        s1 = G_free[0, 4]
+        n1 = G_free[0, 1:4]
+        p1 = G_free[1:4, 4]
+        M1 = G_free[1:4, 1:4]
+        try:
+            inv_I_minus_M = np.linalg.inv(np.eye(3) - M)
+            inv_I_minus_M1 = np.linalg.inv(np.eye(3) - M1)
+        except np.linalg.LinAlgError as e:
+            print(f"Linear algebra error inverting (I - M): {e}")
+            return 1.0
+        delta_r2 = s + n @ inv_I_minus_M @ p
+        delta_r2_free = s1 + n1 @ inv_I_minus_M1 @ p1
+        return np.sqrt(delta_r2 / delta_r2_free)
