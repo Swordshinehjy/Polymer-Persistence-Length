@@ -48,18 +48,68 @@ def inverse_data(filename):
     np.savetxt(filename.stem + "-inv.txt", data_new, fmt="%.10f")
 
 
+def rotation_matrix(axis, angle):
+    """
+        Return the rotation matrix associated with 
+        counterclockwise rotation about the given 
+        axis by angle radians.
+        """
+    axis = np.asarray(axis)
+    axis = axis / np.linalg.norm(axis)
+    a = np.cos(angle / 2.0)
+    b, c, d = -axis * np.sin(angle / 2.0)
+    aa, bb, cc, dd = a * a, b * b, c * c, d * d
+    bc, ad, ac, ab, bd, cd = b * c, a * d, a * c, a * b, b * d, c * d
+    return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac)],
+                     [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
+                     [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
+
+
+def randomRotate(base_pts, angles, flat_rotation):
+    pts = base_pts.copy()
+    for idx, angle in enumerate(angles):
+        if flat_rotation[idx] != 0:
+            vec = pts[idx] - pts[idx - 1]
+            axis = vec / np.linalg.norm(vec)
+            rot = rotation_matrix(axis, np.deg2rad(angle))
+            pts[idx + 1:] = (pts[idx + 1:] - pts[idx]) @ rot.T + pts[idx]
+    return pts
+
+
+def cosVals(pts, length):
+    """Python implementation of cosVals function."""
+    k_values = np.arange(2, len(pts), length)
+    vectors = pts[k_values] - pts[k_values - 1]
+    v2 = vectors[0]
+    dots = vectors @ v2
+    norms = np.linalg.norm(vectors, axis=1) * np.linalg.norm(v2)
+    return np.clip(dots / norms, -1, 1)
+
+
+def dihedralRotate(pts, nb, theta_deg):
+    """Rotate points around the bond defined by points nb-1 and nb by theta_deg degrees."""
+    theta_rad = np.deg2rad(theta_deg)
+    vec = pts[nb] - pts[nb - 1]
+    vec_norm = np.linalg.norm(vec)
+    axis = vec / vec_norm
+    rot = rotation_matrix(axis, theta_rad)
+    pts[nb + 1:] = (pts[nb + 1:] - pts[nb]) @ rot.T + pts[nb]
+    return pts
+
+
 def compute_persistence_terpolymer(Mmat, prob):
     """
     Computes correlation length for a terpolymer made of two repeat units 
     appearing with probability prob and 1-prob.
 
+    Mean-field approximation is used to combine the persistence lengths of the
+    individual repeat units.
     Parameters:
     -----------
     Mmat : listlike
         List of transformation matrices for each repeat unit type
     prob : listlike
         List of probabilities for each repeat unit type
-
     Returns:
     --------
     float
@@ -92,7 +142,6 @@ def compute_persistence_terpolymer(Mmat, prob):
 
     if lambda_max >= 1.0:
         return np.inf, 1.0
-
     lp_in_repeats = -1.0 / np.log(lambda_max)
     return lp_in_repeats
 
@@ -103,6 +152,9 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
                                          plot=True) -> np.ndarray:
     """
     Computes correlation length for a terpolymer across a range of temperatures.
+
+    Mean-field approximation is used to combine the persistence lengths of the
+    individual repeat units.
     
     This function integrates temperature_scan and compute_persistence_terpolymer
     to calculate how the correlation length of a terpolymer changes with temperature.
@@ -221,8 +273,10 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
             if np.any(np.isfinite(lp_plot)):
                 CS = plt.contour(X, Y, lp_plot, colors='white', alpha=0.5)
                 plt.clabel(CS, inline=True, fontsize=8, fmt="%.1f")
-            format_subplot("Probability of Repeat Unit 1", "Temperature (K)",
-                           "Terpolymer Correlation Length", grid=False)
+            format_subplot("Probability of Repeat Unit 1",
+                           "Temperature (K)",
+                           "Terpolymer Correlation Length",
+                           grid=False)
             plt.show()
     return corr
 
@@ -348,6 +402,9 @@ def compute_r2_terpolymer_Tscan(polymer_models,
                                 plot=True) -> np.ndarray:
     """
     Computes mean square end-to-end distance for a terpolymer across a range of temperatures.
+
+    Mean-field approximation is used to combine the persistence lengths of the
+    individual repeat units.
     
     This function integrates temperature_scan and compute_persistence_terpolymer
     to calculate how the mean square end-to-end distance of a terpolymer changes with temperature.
@@ -454,9 +511,7 @@ def compute_r2_terpolymer_Tscan(polymer_models,
                             interpolation='bicubic')
 
             cbar = plt.colorbar(im)
-            cbar.set_label("<R²> (Å²)",
-                           fontsize=14,
-                           fontfamily="Helvetica")
+            cbar.set_label("<R²> (Å²)", fontsize=14, fontfamily="Helvetica")
             cbar.ax.tick_params(labelsize=14)
             plt.setp(cbar.ax.get_yticklabels(), fontfamily="Helvetica")
 
@@ -464,8 +519,9 @@ def compute_r2_terpolymer_Tscan(polymer_models,
             if np.any(np.isfinite(lp_plot)):
                 CS = plt.contour(X, Y, lp_plot, colors='white', alpha=0.5)
                 plt.clabel(CS, inline=True, fontsize=8, fmt="%.1f")
-            format_subplot("Probability of Repeat Unit 1", "Temperature (K)",
-                           "Terpolymer <R²>", grid=False)
+            format_subplot("Probability of Repeat Unit 1",
+                           "Temperature (K)",
+                           "Terpolymer <R²>",
+                           grid=False)
             plt.show()
     return result
-

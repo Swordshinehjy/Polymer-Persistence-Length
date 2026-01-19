@@ -20,4 +20,4 @@ from .tool import (compare_persistence_results,
                    compute_persistence_terpolymer_Tscan, inverse_data,
                    format_subplot, read_ris_data, compute_r2_terpolymer_Tscan)
 
-__version__ = '0.11.11'
+__version__ = '0.11.13'

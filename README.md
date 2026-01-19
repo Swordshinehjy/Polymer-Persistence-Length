@@ -159,7 +159,7 @@ See the original paper [Predicting Chain Dimensions of Semiflexible Polymers fro
 *   l[1] rotated by rotation_type 1 with a deflection angle Angle[1]
 ### Update
 *   Add the Monte Carlo sampling method using Cython
-*   Add the rotational isomeric state (RIS) model and the mixed HR-RIS model using the same logic
+*   Add the rotational isomeric state (RIS) model and the mixed HR-RIS model using the same logic (Add 'type': 'ris' to labels)
 
 
 

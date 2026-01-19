@@ -25,8 +25,6 @@ class PolymerPersistenceFK:
                  temperature=300.0,
                  rotation_types=None,
                  rotation_labels=None,
-                 ris_types=None,
-                 ris_labels=None,
                  fitting_method='interpolation',
                  param_n=5):
         """Initialize the optimized polymer persistence model."""
@@ -39,19 +37,17 @@ class PolymerPersistenceFK:
         self.kTval = sc.R * self.temperature / 1000  # in kJ/mol
 
         self.rotation_labels = rotation_labels
-        for rot_id in self.rotation_labels:
-            rot = self.rotation_labels[rot_id]
-            if 'data' in rot or 'fitf' in rot and 'label' not in rot:
+        for rot_id, info in self.rotation_labels.items():
+            if 'type' not in info:
+                self.rotation_labels[rot_id]['type'] = 'continuous'
+            if 'data' in info or 'fitf' in info and 'label' not in info:
                 self.rotation_labels[rot_id]['label'] = f"dihedral {rot_id}"
-            if 'loc' in rot and 'label' not in rot:
+            if 'loc' in info and 'label' not in info:
                 file_path = self.rotation_labels[rot_id]['loc']
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
-        self.ris_labels = ris_labels
-        self.ris_types = ris_types
-        if self.ris_types is not None:
-            self.ris_types = np.array(self.ris_types)
-            self.ris_data = {}
-            for ris_id, info in self.ris_labels.items():
+        self.ris_data = {}
+        for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
                 try:
                     if 'data' in info:
                         risdata = np.asarray(info['data'])
@@ -59,10 +55,10 @@ class PolymerPersistenceFK:
                     elif 'loc' in info:
                         angles, energies = tool.read_ris_data(Path(
                             info['loc']))
-                    self.ris_data[ris_id] = (angles, energies)
+                    self.ris_data[rot_id] = (angles, energies)
                 except FileNotFoundError:
                     print(
-                        f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
+                        f"Warning: RIS data file not found. Skipping RIS type {rot_id}."
                     )
                     continue
         self._full_data = {}
@@ -103,6 +99,8 @@ class PolymerPersistenceFK:
             return
 
         for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                continue
             try:
                 if 'fitf' in info:
                     fitf = info['fitf']
@@ -235,22 +233,18 @@ class PolymerPersistenceFK:
                 inv_cdf = data_type['inv_cdf']
                 angles_deg[:, mask] = inv_cdf(rand_vals[:, mask])
 
-        if self.ris_types is not None:
-            flat_ris = np.tile(
-                self.ris_types, n_samples * n_total_bonds // n_bonds_per_unit +
-                1)[:n_total_bonds]
-            for ris_id, (ang_deg, energies) in self.ris_data.items():
-                mask = (flat_ris == ris_id)
-                if not np.any(mask):
-                    continue
+        for ris_id, (ang_deg, energies) in self.ris_data.items():
+            mask = (flat_rotation == ris_id)
+            if not np.any(mask):
+                continue
 
-                boltz = np.exp(-energies / self.kTval)
-                prob = boltz / boltz.sum()
+            boltz = np.exp(-energies / self.kTval)
+            prob = boltz / boltz.sum()
 
-                sampled = rng.choice(ang_deg,
-                                     size=(n_samples, np.sum(mask)),
-                                     p=prob)
-                angles_deg[:, mask] = sampled
+            sampled = rng.choice(ang_deg,
+                                    size=(n_samples, np.sum(mask)),
+                                    p=prob)
+            angles_deg[:, mask] = sampled
 
         return np.deg2rad(angles_deg)
 

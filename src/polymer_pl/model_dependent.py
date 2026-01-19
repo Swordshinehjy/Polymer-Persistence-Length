@@ -33,8 +33,6 @@ class PolymerPersistenceDependentDefelection:
                  temperature=300.0,
                  rotation_types=None,
                  rotation_labels=None,
-                 ris_types=None,
-                 ris_labels=None,
                  deflection_types=None,
                  fitting_method='interpolation',
                  param_n=5):
@@ -49,8 +47,6 @@ class PolymerPersistenceDependentDefelection:
                                                  specific rotational potential profile. A value of 0
                                                  indicates a fixed bond with no rotation.
             rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
-            ris_types (list or np.ndarray, optional): An array of integers mapping each bond to ris model.
-            ris_labels (dict, optional): A dictionary mapping ris_types to data files.
             fitting_method (str, optional): The method used for fitting the data. 'interpolation', 'cosine' or 'fourier'.
             param_n (int, optional): The order for fitting the data.
         """
@@ -63,19 +59,40 @@ class PolymerPersistenceDependentDefelection:
 
         # Default labels mapping rotation_types to data files
         self.rotation_labels = rotation_labels
-        for rot_id in self.rotation_labels:
-            rot = self.rotation_labels[rot_id]
-            if 'data' in rot and 'label' not in rot:
+        ris_list = []
+        for rot_id, info in self.rotation_labels.items():
+            if 'type' not in info:
+                self.rotation_labels[rot_id]['type'] = 'continuous'
+            if info.get('type') == 'ris':
+                ris_list.append(rot_id)
+            if 'data' in info or 'fitf' in info and 'label' not in info:
                 self.rotation_labels[rot_id]['label'] = f"dihedral {rot_id}"
-            if 'loc' in rot and 'label' not in rot:
+            if 'loc' in info and 'label' not in info:
                 file_path = self.rotation_labels[rot_id]['loc']
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
-        self.ris_labels = ris_labels
-        self.ris_types = ris_types
+        self.ris_data = {}
+        for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                try:
+                    if 'data' in info:
+                        risdata = np.asarray(info['data'])
+                        angles, energies = risdata[:, 0], risdata[:, 1]
+                    elif 'loc' in info:
+                        angles, energies = tool.read_ris_data(Path(
+                            info['loc']))
+                    self.ris_data[rot_id] = (angles, energies)
+                except FileNotFoundError:
+                    print(
+                        f"Warning: RIS data file not found. Skipping RIS type {rot_id}."
+                    )
+                    continue
         if deflection_types is None:
             self.deflection_types = np.array(rotation_types).copy()
-            mask = self.rotation_types == 0
-            self.deflection_types[mask] = np.roll(self.rotation_types, 1)[mask]
+            for ris_id in ris_list:
+                mask0 = self.deflection_types == ris_id
+                self.deflection_types[mask0] = 0
+            mask = self.deflection_types == 0
+            self.deflection_types[mask] = np.roll(self.deflection_types, 1)[mask]
         else:
             self.deflection_types = np.array(deflection_types)
         # --- Internal cache for lazy evaluation ---
@@ -139,6 +156,8 @@ class PolymerPersistenceDependentDefelection:
             return
 
         for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                continue
             try:
                 if 'fitf' in info:
                     self._computational_data[rot_id] = {
@@ -243,25 +262,6 @@ class PolymerPersistenceDependentDefelection:
         self._prepare_computational_data()
         # list deflection functions
         fitf_deflection = self._fit_deflection(Path(self.bond_angle_file))
-        # Initialize RIS data if needed
-        if self.ris_types is not None:
-            self.ris_types = np.array(self.ris_types)
-            if not hasattr(self, 'ris_data') or self.ris_data is None:
-                self.ris_data = {}
-                for ris_id, info in self.ris_labels.items():
-                    try:
-                        if 'data' in info:
-                            risdata = np.asarray(info['data'])
-                            angles, energies = risdata[:, 0], risdata[:, 1]
-                        elif 'loc' in info:
-                            angles, energies = tool.read_ris_data(
-                                Path(info['loc']))
-                        self.ris_data[ris_id] = (angles, energies)
-                    except FileNotFoundError:
-                        print(
-                            f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
-                        )
-                        continue
 
         M = len(self.rotation_types)
         # deflection using rotation types
@@ -272,8 +272,6 @@ class PolymerPersistenceDependentDefelection:
 
         for i in range(M):
             rot_id = int(self.rotation_types[i])
-            ris_id = int(
-                self.ris_types[i]) if self.ris_types is not None else 0
             fitf_angle = fitf_deflection[i]
             deflection_id = self.deflection_types[i]
             if deflection_id == 0:
@@ -286,39 +284,40 @@ class PolymerPersistenceDependentDefelection:
                 fitf = self._computational_data[deflection_id]['fitf']
                 c, s, angle_avg = self._compute_deflection_integrals(
                     fitf_angle, fitf)
-            if rot_id == 0 and ris_id == 0:
+            if rot_id == 0:
                 m_i, s_i = 1.0, 0.0  # Fixed bond
-            elif rot_id != 0:
-                # Continuous rotation model
-                if rot_id not in self._computational_data:
-                    print(
-                        f"Warning: No data for rotation ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
-                    )
-                    m_i, s_i = 1.0, 0.0
-                else:
-                    if rot_id not in integral_cache:
-                        fitf = self._computational_data[rot_id]['fitf']
-                        integral_cache[
-                            rot_id] = self._compute_rotation_integrals(fitf)
-                    m_i, s_i = integral_cache[rot_id]
-            elif ris_id != 0:
-                if ris_id not in self.ris_data:
-                    print(
-                        f"Warning: No data for RIS ID {ris_id}. Assuming a rigid bond (m=1, s=0)."
-                    )
-                    m_i, s_i = 1.0, 0.0
-
-                else:
-                    if ris_id not in ris_cache:
-                        angles_deg, energies = self.ris_data[ris_id]
-                        m_i, s_i = tool.compute_ris_rotation_integrals(
-                            angles_deg, energies, self.kTval)
-                        ris_cache[ris_id] = (m_i, s_i)
-                    else:
-                        m_i, s_i = ris_cache[ris_id]
             else:
-                # Default case (should not reach here)
-                m_i, s_i = 1.0, 0.0
+                rot_info = self.rotation_labels.get(rot_id, {})
+                is_ris = rot_info.get('type') == 'ris'
+                if is_ris:
+                    # RIS model
+                    if rot_id not in self.ris_data:
+                        print(
+                            f"Warning: No data for RIS ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
+                        )
+                        m_i, s_i = 1.0, 0.0
+                    else:
+                        if rot_id not in ris_cache:
+                            angles_deg, energies = self.ris_data[rot_id]
+                            m_i, s_i = tool.compute_ris_rotation_integrals(
+                                angles_deg, energies, self.kTval)
+                            ris_cache[rot_id] = (m_i, s_i)
+                        else:
+                            m_i, s_i = ris_cache[rot_id]
+                else:
+                    # Continuous rotation model
+                    if rot_id not in self._computational_data:
+                        print(
+                            f"Warning: No data for rotation ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
+                        )
+                        m_i, s_i = 1.0, 0.0
+                    else:
+                        if rot_id not in integral_cache:
+                            fitf = self._computational_data[rot_id]['fitf']
+                            integral_cache[
+                                rot_id] = self._compute_rotation_integrals(fitf)
+                        m_i, s_i = integral_cache[rot_id]
+
             # Dihedral rotation matrix (around x-axis)
             R_x = np.array([[1, 0.0, 0.0], [0.0, m_i, -s_i], [0.0, s_i, m_i]])
             # Bond angle deflection matrix (around z-axis)

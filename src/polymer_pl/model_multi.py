@@ -31,10 +31,8 @@ class PolymerPersistenceMulti():
                  bond_lengths: List,
                  bond_angles_deg: List,
                  temperature: float = 300.0,
-                 rotation_types: List = {},
+                 rotation_types: List = [],
                  rotation_labels: Dict[int, Dict] = {},
-                 ris_types: Union[None, List] = None,
-                 ris_labels: Union[None, Dict[int, Dict]] = None,
                  fitting_method='interpolation',
                  param_n=15):
         """Initialize the optimized polymer persistence model."""
@@ -43,39 +41,53 @@ class PolymerPersistenceMulti():
         self.bond_angles_rad = [
             np.deg2rad(np.array(unit_angle)) for unit_angle in bond_angles_deg
         ]
-        self.rotation_types = [
-            np.array(rotation) for rotation in rotation_types
-        ]
+
         self.temperature = temperature
         self.kTval = sc.R * self.temperature / 1000  # in kJ/mol
 
         self.rotation_labels = rotation_labels
-        for rot_id in self.rotation_labels:
-            rot = self.rotation_labels[rot_id]
-            if 'data' in rot or 'fitf' in rot and 'label' not in rot:
+        ris_list = []
+        for rot_id, info in self.rotation_labels.items():
+            if 'type' not in info:
+                self.rotation_labels[rot_id]['type'] = 'continuous'
+            if info.get('type') == 'ris':
+                ris_list.append(rot_id)
+            if 'data' in info or 'fitf' in info and 'label' not in info:
                 self.rotation_labels[rot_id]['label'] = f"dihedral {rot_id}"
-            if 'loc' in rot and 'label' not in rot:
+            if 'loc' in info and 'label' not in info:
                 file_path = self.rotation_labels[rot_id]['loc']
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
-        self.ris_labels = ris_labels
-        self.ris_types = ris_types
+        self.rotation_types = []
+        self.ris_types = [] if len(ris_list) > 0 else None
+
+        for rotation in rotation_types:
+            rot_arr = np.array(rotation)
+            if self.ris_types is not None:
+                ris_arr = np.zeros_like(rot_arr)
+                for ris_id in ris_list:
+                    mask = rot_arr == ris_id
+                    ris_arr[mask] = rot_arr[mask]
+                    rot_arr[mask] = 0
+                self.ris_types.append(ris_arr)
+            self.rotation_types.append(rot_arr)
+
         self.ris_data = {}
         if self.ris_types is not None:
-            self.ris_types = [np.array(ris) for ris in self.ris_types]
-            for ris_id, info in self.ris_labels.items():
-                try:
-                    if 'data' in info:
-                        risdata = np.asarray(info['data'])
-                        angles, energies = risdata[:, 0], risdata[:, 1]
-                    elif 'loc' in info:
-                        angles, energies = tool.read_ris_data(Path(
-                            info['loc']))
-                    self.ris_data[ris_id] = (angles, energies)
-                except FileNotFoundError:
-                    print(
-                        f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
-                    )
-                    continue
+            for ris_id, info in self.rotation_labels.items():
+                if info.get('type') == 'ris':
+                    try:
+                        if 'data' in info:
+                            risdata = np.asarray(info['data'])
+                            angles, energies = risdata[:, 0], risdata[:, 1]
+                        elif 'loc' in info:
+                            angles, energies = tool.read_ris_data(
+                                Path(info['loc']))
+                        self.ris_data[ris_id] = (angles, energies)
+                    except FileNotFoundError:
+                        print(
+                            f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
+                        )
+                        continue
         self._full_data = {}
         self.fitting_method = fitting_method
         self.param_n = param_n
@@ -114,6 +126,8 @@ class PolymerPersistenceMulti():
             return
 
         for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                continue
             try:
                 if 'fitf' in info:
                     fitf = info['fitf']

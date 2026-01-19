@@ -25,8 +25,6 @@ class PolymerPersistenceDependentDihedral:
                  temperature=300.0,
                  rotation_types=None,
                  rotation_labels=None,
-                 ris_types=None,
-                 ris_labels=None,
                  coupled_pairs=None,
                  coupled_labels=None,
                  fitting_method='interpolation',
@@ -44,8 +42,6 @@ class PolymerPersistenceDependentDihedral:
                                                  specific rotational potential profile. A value of 0
                                                  indicates a fixed bond with no rotation.
             rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
-            ris_types (list or np.ndarray, optional): An array of integers mapping each bond to ris model.
-            ris_labels (dict, optional): A dictionary mapping ris_types to data files.
             coupled_pairs (list of tuples, optional): List of tuples indicating which dihedrals are coupled.
                                                      Each tuple contains indices of coupled dihedrals.
             coupled_labels (dict, optional): Dictionary mapping coupled pair indices to 2D data files.
@@ -66,13 +62,30 @@ class PolymerPersistenceDependentDihedral:
 
         # Default labels mapping rotation_types to data files
         self.rotation_labels = rotation_labels if rotation_labels is not None else {}
-        for rot_id in self.rotation_labels:
-            rot = self.rotation_labels[rot_id]
-            if 'data' in rot and 'label' not in rot:
+        for rot_id, info in self.rotation_labels.items():
+            if 'type' not in info:
+                self.rotation_labels[rot_id]['type'] = 'continuous'
+            if 'data' in info or 'fitf' in info and 'label' not in info:
                 self.rotation_labels[rot_id]['label'] = f"dihedral {rot_id}"
-            if 'loc' in rot and 'label' not in rot:
+            if 'loc' in info and 'label' not in info:
                 file_path = self.rotation_labels[rot_id]['loc']
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
+        self.ris_data = {}
+        for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                try:
+                    if 'data' in info:
+                        risdata = np.asarray(info['data'])
+                        angles, energies = risdata[:, 0], risdata[:, 1]
+                    elif 'loc' in info:
+                        angles, energies = tool.read_ris_data(Path(
+                            info['loc']))
+                    self.ris_data[rot_id] = (angles, energies)
+                except FileNotFoundError:
+                    print(
+                        f"Warning: RIS data file not found. Skipping RIS type {rot_id}."
+                    )
+                    continue
 
         # Process coupled labels
         for cp_id in self.coupled_labels:
@@ -80,9 +93,6 @@ class PolymerPersistenceDependentDihedral:
             if 'loc' in cp and 'label' not in cp:
                 file_path = cp['loc']
                 self.coupled_labels[cp_id]['label'] = Path(file_path).stem
-
-        self.ris_labels = ris_labels if ris_labels is not None else {}
-        self.ris_types = ris_types
         self.vectorized = vectorized
         self.method = method
 
@@ -169,6 +179,8 @@ class PolymerPersistenceDependentDihedral:
     def _prepare_independent_data(self):
         """Sets up interpolation functions for independent dihedrals."""
         for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                continue
             try:
                 if 'fitf' in info:
                     self._computational_data[rot_id] = {
@@ -387,26 +399,6 @@ class PolymerPersistenceDependentDihedral:
         """Constructs the overall transformation matrix M for the repeat unit."""
         self._prepare_computational_data()
 
-        # Initialize RIS data if needed
-        if self.ris_types is not None:
-            self.ris_types = np.array(self.ris_types)
-            if not hasattr(self, 'ris_data') or self.ris_data is None:
-                self.ris_data = {}
-                for ris_id, info in self.ris_labels.items():
-                    try:
-                        if 'data' in info:
-                            risdata = np.asarray(info['data'])
-                            angles, energies = risdata[:, 0], risdata[:, 1]
-                        elif 'loc' in info:
-                            angles, energies = tool.read_ris_data(
-                                Path(info['loc']))
-                        self.ris_data[ris_id] = (angles, energies)
-                    except FileNotFoundError:
-                        print(
-                            f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
-                        )
-                        continue
-
         M = len(self.rotation_types)
         A_list = []
         integral_cache = {}
@@ -415,8 +407,6 @@ class PolymerPersistenceDependentDihedral:
 
         for i in range(M):
             rot_id = int(self.rotation_types[i])
-            ris_id = int(
-                self.ris_types[i]) if self.ris_types is not None else 0
             theta = float(self.bond_angles_rad[i])
 
             # Check if this dihedral is part of a coupled pair
@@ -439,38 +429,40 @@ class PolymerPersistenceDependentDihedral:
                 # Get the appropriate values based on position
                 m_i, s_i = coupled_cache[cp_id][position]
 
-            elif rot_id == 0 and ris_id == 0:
+            elif rot_id == 0:
                 m_i, s_i = 1.0, 0.0  # Fixed bond
-            elif rot_id != 0:
-                # Continuous rotation model
-                if rot_id not in self._computational_data:
-                    print(
-                        f"Warning: No data for rotation ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
-                    )
-                    m_i, s_i = 1.0, 0.0
-                else:
-                    if rot_id not in integral_cache:
-                        fitf = self._computational_data[rot_id]['fitf']
-                        integral_cache[
-                            rot_id] = self._compute_independent_rotation_integrals(
-                                fitf)
-                    m_i, s_i = integral_cache[rot_id]
-            elif ris_id != 0:
-                if ris_id not in self.ris_data:
-                    print(
-                        f"Warning: No data for RIS ID {ris_id}. Assuming a rigid bond (m=1, s=0)."
-                    )
-                    m_i, s_i = 1.0, 0.0
-                else:
-                    if ris_id not in ris_cache:
-                        angles_deg, energies = self.ris_data[ris_id]
-                        m_i, s_i = tool.compute_ris_rotation_integrals(
-                            angles_deg, energies, self.kTval)
-                        ris_cache[ris_id] = (m_i, s_i)
-                    else:
-                        m_i, s_i = ris_cache[ris_id]
             else:
-                m_i, s_i = 1.0, 0.0
+                # Continuous rotation model
+                rot_info = self.rotation_labels.get(rot_id, {})
+                is_ris = rot_info.get('type') == 'ris'
+                if is_ris:
+                    # RIS model
+                    if rot_id not in self.ris_data:
+                        print(
+                            f"Warning: No data for RIS ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
+                        )
+                        m_i, s_i = 1.0, 0.0
+                    else:
+                        if rot_id not in ris_cache:
+                            angles_deg, energies = self.ris_data[rot_id]
+                            m_i, s_i = tool.compute_ris_rotation_integrals(
+                                angles_deg, energies, self.kTval)
+                            ris_cache[rot_id] = (m_i, s_i)
+                        else:
+                            m_i, s_i = ris_cache[rot_id]
+                else:
+                    if rot_id not in self._computational_data:
+                        print(
+                            f"Warning: No data for rotation ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
+                        )
+                        m_i, s_i = 1.0, 0.0
+                    else:
+                        if rot_id not in integral_cache:
+                            fitf = self._computational_data[rot_id]['fitf']
+                            integral_cache[
+                                rot_id] = self._compute_independent_rotation_integrals(
+                                    fitf)
+                        m_i, s_i = integral_cache[rot_id]
 
             R_x = np.array([[1, 0.0, 0.0], [0.0, m_i, -s_i], [0.0, s_i, m_i]])
 
@@ -1082,7 +1074,7 @@ class PolymerPersistenceDependentDihedral:
             rot_id = int(self.rotation_types[i])
             theta = float(self.bond_angles_rad[i])
             c, s = np.cos(theta), np.sin(theta)
-            if rot_id == 0:
+            if rot_id == 0 or self.rotation_labels[rot_id]['type'] == 'ris':
                 R_z = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1]])
                 A_list.append(R_z)
             else:

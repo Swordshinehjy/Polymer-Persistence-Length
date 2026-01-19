@@ -9,7 +9,7 @@ from numpy.linalg import eigvals
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from . import tool
-
+from typing import Dict
 try:
     from . import chain_rotation
 except ImportError:
@@ -34,9 +34,7 @@ class PolymerPersistence:
                  bond_angles_deg,
                  temperature=300.0,
                  rotation_types=None,
-                 rotation_labels=None,
-                 ris_types=None,
-                 ris_labels=None,
+                 rotation_labels: Dict[int, Dict] = None,
                  fitting_method='interpolation',
                  param_n=5):
         """
@@ -50,8 +48,6 @@ class PolymerPersistence:
                                                  specific rotational potential profile. A value of 0
                                                  indicates a fixed bond with no rotation.
             rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
-            ris_types (list or np.ndarray, optional): An array of integers mapping each bond to ris model.
-            ris_labels (dict, optional): A dictionary mapping ris_types to data files.
             fitting_method (str, optional): The method used for fitting the data. 'interpolation', 'cosine' or 'fourier'.
             param_n (int, optional): The order for fitting the data.
         """
@@ -64,34 +60,30 @@ class PolymerPersistence:
 
         # Default labels mapping rotation_types to data files
         self.rotation_labels = rotation_labels
-        for rot_id in self.rotation_labels:
-            rot = self.rotation_labels[rot_id]
-            if 'data' in rot or 'fitf' in rot and 'label' not in rot:
+        for rot_id, info in self.rotation_labels.items():
+            if 'type' not in info:
+                self.rotation_labels[rot_id]['type'] = 'continuous'
+            if 'data' in info or 'fitf' in info and 'label' not in info:
                 self.rotation_labels[rot_id]['label'] = f"dihedral {rot_id}"
-            if 'loc' in rot and 'label' not in rot:
+            if 'loc' in info and 'label' not in info:
                 file_path = self.rotation_labels[rot_id]['loc']
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
-        self.ris_labels = ris_labels
-        self.ris_types = ris_types
-        # Initialize RIS data if needed
-        if self.ris_types is not None:
-            self.ris_types = np.array(self.ris_types)
-            if not hasattr(self, 'ris_data') or self.ris_data is None:
-                self.ris_data = {}
-                for ris_id, info in self.ris_labels.items():
-                    try:
-                        if 'data' in info:
-                            risdata = np.asarray(info['data'])
-                            angles, energies = risdata[:, 0], risdata[:, 1]
-                        elif 'loc' in info:
-                            angles, energies = tool.read_ris_data(
-                                Path(info['loc']))
-                        self.ris_data[ris_id] = (angles, energies)
-                    except FileNotFoundError:
-                        print(
-                            f"Warning: RIS data file not found. Skipping RIS type {ris_id}."
-                        )
-                        continue
+        self.ris_data = {}
+        for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                try:
+                    if 'data' in info:
+                        risdata = np.asarray(info['data'])
+                        angles, energies = risdata[:, 0], risdata[:, 1]
+                    elif 'loc' in info:
+                        angles, energies = tool.read_ris_data(Path(
+                            info['loc']))
+                    self.ris_data[rot_id] = (angles, energies)
+                except FileNotFoundError:
+                    print(
+                        f"Warning: RIS data file not found. Skipping RIS type {rot_id}."
+                    )
+                    continue
         # --- Internal cache for lazy evaluation ---
         self._Mmat = None
         self._A_list = None
@@ -139,6 +131,8 @@ class PolymerPersistence:
             return
 
         for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':  # Skip RIS types
+                continue
             try:
                 if 'fitf' in info:
                     self._computational_data[rot_id] = {
@@ -190,6 +184,8 @@ class PolymerPersistence:
         if self._full_data:
             return
         for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                continue
             try:
                 if 'fitf' in info:
                     fitf = info['fitf']
@@ -289,42 +285,44 @@ class PolymerPersistence:
 
         for i in range(M):
             rot_id = int(self.rotation_types[i])
-            ris_id = int(
-                self.ris_types[i]) if self.ris_types is not None else 0
             theta = float(self.bond_angles_rad[i])
 
-            if rot_id == 0 and ris_id == 0:
+            if rot_id == 0:
                 m_i, s_i = 1.0, 0.0  # Fixed bond
-            elif rot_id != 0:
-                # Continuous rotation model
-                if rot_id not in self._computational_data:
-                    print(
-                        f"Warning: No data for rotation ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
-                    )
-                    m_i, s_i = 1.0, 0.0
-                else:
-                    if rot_id not in integral_cache:
-                        fitf = self._computational_data[rot_id]['fitf']
-                        integral_cache[
-                            rot_id] = self._compute_rotation_integrals(fitf)
-                    m_i, s_i = integral_cache[rot_id]
-            elif ris_id != 0:
-                if ris_id not in self.ris_data:
-                    print(
-                        f"Warning: No data for RIS ID {ris_id}. Assuming a rigid bond (m=1, s=0)."
-                    )
-                    m_i, s_i = 1.0, 0.0
-                else:
-                    if ris_id not in ris_cache:
-                        angles_deg, energies = self.ris_data[ris_id]
-                        m_i, s_i = tool.compute_ris_rotation_integrals(
-                            angles_deg, energies, self.kTval)
-                        ris_cache[ris_id] = (m_i, s_i)
-                    else:
-                        m_i, s_i = ris_cache[ris_id]
             else:
-                # Default case (should not reach here)
-                m_i, s_i = 1.0, 0.0
+                # Check if this is RIS or continuous
+                rot_info = self.rotation_labels.get(rot_id, {})
+                is_ris = rot_info.get('type') == 'ris'
+
+                if is_ris:
+                    # RIS model
+                    if rot_id not in self.ris_data:
+                        print(
+                            f"Warning: No data for RIS ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
+                        )
+                        m_i, s_i = 1.0, 0.0
+                    else:
+                        if rot_id not in ris_cache:
+                            angles_deg, energies = self.ris_data[rot_id]
+                            m_i, s_i = tool.compute_ris_rotation_integrals(
+                                angles_deg, energies, self.kTval)
+                            ris_cache[rot_id] = (m_i, s_i)
+                        else:
+                            m_i, s_i = ris_cache[rot_id]
+                else:
+                    # Continuous rotation model
+                    if rot_id not in self._computational_data:
+                        print(
+                            f"Warning: No data for rotation ID {rot_id}. Assuming a rigid bond (m=1, s=0)."
+                        )
+                        m_i, s_i = 1.0, 0.0
+                    else:
+                        if rot_id not in integral_cache:
+                            fitf = self._computational_data[rot_id]['fitf']
+                            integral_cache[
+                                rot_id] = self._compute_rotation_integrals(
+                                    fitf)
+                        m_i, s_i = integral_cache[rot_id]
 
             # Dihedral rotation matrix (around x-axis)
             R_x = np.array([[1, 0.0, 0.0], [0.0, m_i, -s_i], [0.0, s_i, m_i]])
@@ -697,33 +695,30 @@ class PolymerPersistence:
         segments = np.column_stack((rotated_x, rotated_y, rotated_z))
         return np.cumsum(np.vstack((np.array([[0, 0, 0]]), segments)), axis=0)
 
-    def pre_generate_angles(self, n_samples, flat_rotation, flat_ris):
-        """Original independent sampling method."""
+    def pre_generate_angles(self, n_samples, flat_rotation):
+        """Generate angles for all rotation types (continuous and RIS)."""
         self._prepare_full_data()
         num_positions = len(flat_rotation)
         rng = np.random.default_rng()
         rand_vals = rng.random((n_samples, num_positions))
         angles_per_position = np.zeros((n_samples, num_positions))
-
-        for rot_type, data_type in self._full_data.items():
-            mask = flat_rotation == rot_type
+        # Handle continuous rotation types
+        for rot_id, data_type in self._full_data.items():
+            mask = flat_rotation == rot_id
             if np.any(mask):
                 inv_cdf = data_type['inv_cdf']
                 angles_per_position[:, mask] = inv_cdf(rand_vals[:, mask])
-
-        if flat_ris is not None:
-            for ris_id, (ang_deg, energies) in self.ris_data.items():
-                mask = (flat_ris == ris_id)
-                if not np.any(mask):
-                    continue
-
-                boltz = np.exp(-energies / self.kTval)
-                prob = boltz / boltz.sum()
-
-                sampled = rng.choice(ang_deg,
-                                     size=(n_samples, np.sum(mask)),
-                                     p=prob)
-                angles_per_position[:, mask] = sampled
+        # Handle RIS types
+        for rot_id, (ang_deg, energies) in self.ris_data.items():
+            mask = (flat_rotation == rot_id)
+            if not np.any(mask):
+                continue
+            boltz = np.exp(-energies / self.kTval)
+            prob = boltz / boltz.sum()
+            sampled = rng.choice(ang_deg,
+                                 size=(n_samples, np.sum(mask)),
+                                 p=prob)
+            angles_per_position[:, mask] = sampled
         return angles_per_position
 
     def calc_mean_square_end_to_end_distance(self,
@@ -746,13 +741,7 @@ class PolymerPersistence:
         flat_rotation = np.concatenate([
             [0], self.rotation_types[np.arange(len(ch) - 1) % length]
         ])[:-1].astype(np.int64)
-        flat_ris = None
-        if self.ris_types is not None:
-            flat_ris = np.concatenate([
-                [0], self.ris_types[np.arange(len(ch) - 1) % length]
-            ])[:-1].astype(np.int64)
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation,
-                                              flat_ris)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
         r2List = Parallel(n_jobs=n_jobs, verbose=1)(
             delayed(chain_rotation.batch_r2_cython)(
                 np.ascontiguousarray(ch, dtype=np.float64),
@@ -810,15 +799,8 @@ class PolymerPersistence:
         flat_rotation = np.concatenate([
             [0], self.rotation_types[np.arange(len(ch) - 1) % length]
         ])[:-1].astype(np.int64)
-        flat_ris = None
-        if self.ris_types is not None:
-            flat_ris = np.concatenate([
-                [0], self.ris_types[np.arange(len(ch) - 1) % length]
-            ])[:-1].astype(np.int64)
-
         # Pre-generate all angles
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation,
-                                              flat_ris)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
 
         print(f"Calculating {n_samples} samples...")
         print(f"Using {psutil.cpu_count(logical=False)} CPU cores")
@@ -831,7 +813,7 @@ class PolymerPersistence:
         cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
             delayed(self._batch_cosVals_optimized)(
                 ch, all_angles[i * batch_size:(i + 1) *
-                               batch_size], flat_rotation, length)
+                               batch_size], length)
             for i in range(n_batches))
         cosList2 = np.vstack(cosList2)
 
@@ -854,7 +836,7 @@ class PolymerPersistence:
 
         return corr_length
 
-    def _batch_cosVals_optimized(self, ch, all_angles, flat_rotation, length):
+    def _batch_cosVals_optimized(self, ch, all_angles, length):
         """Batch processing function optimized with Cython."""
         if chain_rotation is None:
             raise ImportError("chain_rotation module not available")
@@ -873,14 +855,8 @@ class PolymerPersistence:
         flat_rotation = np.concatenate([
             [0], self.rotation_types[np.arange(len(ch) - 1) % length]
         ])[:-1].astype(np.int64)
-        flat_ris = None
-        if self.ris_types is not None:
-            flat_ris = np.concatenate([
-                [0], self.ris_types[np.arange(len(ch) - 1) % length]
-            ])[:-1].astype(np.int64)
 
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation,
-                                              flat_ris)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
         c = np.zeros((n_repeat_units, n_repeat_units))
         unit_idx = np.arange(0, n_repeat_units * length + 1, length)
         for i in range(n_samples):
@@ -953,15 +929,8 @@ class PolymerPersistence:
             flat_rotation = np.concatenate([
                 [0], self.rotation_types[np.arange(len(ch) - 1) % length]
             ])[:-1].astype(np.int64)
-            flat_ris = None
-            if self.ris_types is not None:
-                flat_ris = np.concatenate([
-                    [0], self.ris_types[np.arange(len(ch) - 1) % length]
-                ])[:-1].astype(np.int64)
-
             # Pre-generate all angles
-            all_angles = self.pre_generate_angles(n_samples, flat_rotation,
-                                                  flat_ris)
+            all_angles = self.pre_generate_angles(n_samples, flat_rotation)
 
             # Parallel computation using Cython optimized version
             batch_size = 1000
@@ -971,7 +940,7 @@ class PolymerPersistence:
             cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
                 delayed(self._batch_cosVals_optimized)(
                     ch, all_angles[i * batch_size:(i + 1) *
-                                   batch_size], flat_rotation, length)
+                                   batch_size], length)
                 for i in range(n_batches))
             cosList2 = np.vstack(cosList2)
 
@@ -1031,10 +1000,8 @@ class PolymerPersistence:
         """
         Calculates the exact mean square end-to-end distance <R^2> 
         matching the specific forward kinematics of the Monte Carlo simulation.
-        
         Args:
             n_repeats (int): Number of repeat units.
-            
         Returns:
             float: The exact <R^2>.
         """
@@ -1054,12 +1021,10 @@ class PolymerPersistence:
         """
         Calculates and plots the exact mean square end-to-end distance <R^2>
         as a function of the number of repeat units n from 0 to n_repeat_unit.
-        
         Args:
             n_repeat_unit (int): Maximum number of repeat units to calculate.
             return_data (bool, optional): Whether to return the R2 data. Defaults to False.
             plot (optional): Whether to plot the results. Defaults to True.
-            
         Returns:
             r2_array.
         """
@@ -1169,7 +1134,7 @@ class PolymerPersistence:
             rot_id = int(self.rotation_types[i])
             theta = float(self.bond_angles_rad[i])
             c, s = np.cos(theta), np.sin(theta)
-            if rot_id == 0:
+            if rot_id == 0 or self.rotation_labels[rot_id]['type'] == 'ris':
                 R_z = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1]])
                 A_list.append(R_z)
             else:

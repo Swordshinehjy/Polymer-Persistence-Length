@@ -45,11 +45,10 @@ class PolymerPlanarity:
 
         # Default labels mapping rotation_types to data files
         self.rotation_labels = rotation_labels
-        for rot_id in self.rotation_labels:
-            rot = self.rotation_labels[rot_id]
-            if 'data' in rot and 'label' not in rot:
+        for rot_id, info in self.rotation_labels.items():
+            if 'data' in info and 'label' not in info:
                 self.rotation_labels[rot_id]['label'] = f"dihedral {rot_id}"
-            elif 'loc' in rot and 'label' not in rot:
+            elif 'loc' in info and 'label' not in info:
                 file_path = self.rotation_labels[rot_id]['loc']
                 self.rotation_labels[rot_id]['label'] = Path(file_path).stem
 
@@ -229,7 +228,7 @@ class PolymerPlanarity:
             f"  <|cosφ|> for one repeat unit: {self.average_absolute_cosine:.6f}"
         )
         print(
-            f"  Planarity correlation length -1/Log(<|cosφ|>): {-1/np.log(self.average_absolute_cosine):.6f}"
+            f"  Planarity correlation length -1/Log(<|cosφ|>) (repeat units): {-1/np.log(self.average_absolute_cosine):.6f}"
         )
         print("-" * 90)
 
