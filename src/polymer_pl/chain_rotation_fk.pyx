@@ -745,3 +745,71 @@ def batch_end_to_end_multi(bond_lengths_list,
             results_view[sample_idx, j] = dx*dx + dy*dy + dz*dz
     
     return results
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def build_chain_copolymer_cy(
+    cnp.ndarray[cnp.double_t, ndim=1] all_l,
+    cnp.ndarray[cnp.double_t, ndim=1] theta,
+    cnp.ndarray[cnp.int64_t, ndim=1] unit_lengths,
+    cnp.ndarray[cnp.double_t, ndim=1] dihedrals
+):
+    cdef Py_ssize_t n_bonds = all_l.shape[0]
+    cdef Py_ssize_t i, j, k
+
+    cdef cnp.ndarray[cnp.double_t, ndim=2] vectors = np.zeros((n_bonds, 3), dtype=np.float64)
+
+    cdef cnp.ndarray[cnp.double_t, ndim=2] coords_full = np.zeros((n_bonds + 1, 3), dtype=np.float64)
+
+    cdef double c_phi, s_phi, c_theta, s_theta
+    cdef double R[3][3]
+    cdef double R_step[3][3]
+    cdef double tmp[3][3]
+
+    R[0][0] = 1.0; R[0][1] = 0.0; R[0][2] = 0.0
+    R[1][0] = 0.0; R[1][1] = 1.0; R[1][2] = 0.0
+    R[2][0] = 0.0; R[2][1] = 0.0; R[2][2] = 1.0
+
+    for j in range(n_bonds):
+        c_phi = cos(dihedrals[j])
+        s_phi = sin(dihedrals[j])
+        c_theta = cos(theta[j])
+        s_theta = sin(theta[j])
+
+        R_step[0][0] = c_theta
+        R_step[1][0] = s_theta
+        R_step[2][0] = 0.0
+
+        R_step[0][1] = -s_theta * c_phi
+        R_step[1][1] =  c_theta * c_phi
+        R_step[2][1] =  s_phi
+
+        R_step[0][2] =  s_theta * s_phi
+        R_step[1][2] = -c_theta * s_phi
+        R_step[2][2] =  c_phi
+
+        for i in range(3):
+            for k in range(3):
+                tmp[i][k] = (
+                    R[i][0] * R_step[0][k] +
+                    R[i][1] * R_step[1][k] +
+                    R[i][2] * R_step[2][k]
+                )
+
+        for i in range(3):
+            for k in range(3):
+                R[i][k] = tmp[i][k]
+
+        vectors[j, 0] = R[0][0] * all_l[j]
+        vectors[j, 1] = R[1][0] * all_l[j]
+        vectors[j, 2] = R[2][0] * all_l[j]
+
+    for j in range(n_bonds):
+        coords_full[j + 1, 0] = coords_full[j, 0] + vectors[j, 0]
+        coords_full[j + 1, 1] = coords_full[j, 1] + vectors[j, 1]
+        coords_full[j + 1, 2] = coords_full[j, 2] + vectors[j, 2]
+
+    cdef cnp.ndarray[cnp.int64_t, ndim=1] end_idx
+    end_idx = np.concatenate(([0], np.cumsum(unit_lengths)))
+
+    return coords_full[end_idx]
