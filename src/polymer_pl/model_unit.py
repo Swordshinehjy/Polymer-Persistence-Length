@@ -688,7 +688,7 @@ class PolymerPersistenceUnit:
         all_chains = np.array(all_chains)
 
         vec = all_chains[:, -1, :] - all_chains[:, 0, :]
-        r2_full = np.sum(vec**2, axis=2)
+        r2_full = np.sum(vec**2, axis=-1)
 
         # R or R²
         values = r2_full if use_r2 else np.sqrt(r2_full)
