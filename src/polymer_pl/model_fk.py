@@ -7,6 +7,7 @@ from joblib import Parallel, delayed
 from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from . import tool
+from scipy.optimize import curve_fit
 try:
     from . import chain_rotation_fk as chain_fk
 except ImportError:
@@ -242,8 +243,8 @@ class PolymerPersistenceFK:
             prob = boltz / boltz.sum()
 
             sampled = rng.choice(ang_deg,
-                                    size=(n_samples, np.sum(mask)),
-                                    p=prob)
+                                 size=(n_samples, np.sum(mask)),
+                                 p=prob)
             angles_deg[:, mask] = sampled
 
         return np.deg2rad(angles_deg)
@@ -331,11 +332,11 @@ class PolymerPersistenceFK:
         return np.clip(dots / norms, -1, 1)
 
     @staticmethod
-    def mean_square_end_to_end(pts, length):
+    def square_end_to_end(pts, length):
         k_values = np.arange(0, pts.shape[1], length)
         vectors = pts[:, k_values, :] - pts[:, 0:1, :]
         square_norms = np.sum(vectors**2, axis=2)
-        return np.mean(square_norms, axis=0)
+        return square_norms
 
     def plot_correlation_function(self,
                                   n_repeat_units=20,
@@ -479,13 +480,8 @@ class PolymerPersistenceFK:
         ax.set_aspect('equal', adjustable='box')
         plt.show()
 
-    def calc_mean_square_end_to_end_distance(self,
-                                             n_repeat_units=20,
-                                             n_samples=150000,
-                                             return_data=False,
-                                             plot=False,
-                                             use_cython=True):
-        """Plot correlation function using FK method."""
+    def _square_end_to_end_distance(self, n_repeat_units, n_samples,
+                                    use_cython):
         if chain_fk is None:
             print("Warning: chain_rotation_fk Cython module not available.")
             use_cython = False
@@ -507,13 +503,23 @@ class PolymerPersistenceFK:
                                                  batch_size],
                                       dtype=np.float64), n_repeat_units)
                 for i in range(n_batches))
-
             r2_results = np.vstack(r2_results)
-            r2 = np.mean(r2_results, axis=0)
         else:
             all_chains = self.build_all_chains_no_cython(
                 n_samples, n_repeat_units, all_angles)
-            r2 = self.mean_square_end_to_end(all_chains, n_bonds_per_unit)
+            r2_results = self.square_end_to_end(all_chains, n_bonds_per_unit)
+        return r2_results
+
+    def calc_mean_square_end_to_end_distance(self,
+                                             n_repeat_units=20,
+                                             n_samples=150000,
+                                             return_data=False,
+                                             plot=True,
+                                             use_cython=True):
+        """Plot correlation function using FK method."""
+        r2_results = self._square_end_to_end_distance(n_repeat_units,
+                                                      n_samples, use_cython)
+        r2 = np.mean(r2_results, axis=0)
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(np.arange(n_repeat_units + 1), r2, 'bo-')
@@ -528,61 +534,29 @@ class PolymerPersistenceFK:
                                      n_repeat_units=20,
                                      n_samples=150000,
                                      bins=100,
-                                     use_r2=True,
                                      density=True,
                                      plot=True,
-                                     use_cython=True,
-                                     return_data=False):
+                                     return_data=False,
+                                     use_cython=True):
         """
-        Calculate the distribution of end-to-end distance (R or R^2)
+        Calculate the distribution of end-to-end distance (R)
         for the FULL chain length.
 
         Parameters
         ----------
-        use_r2 : bool
-            If True, compute distribution of R^2.
-            If False, compute distribution of R = sqrt(R^2).
         density : bool
             If True, normalize histogram to PDF.
         """
-
-        if chain_fk is None:
-            print("Warning: chain_rotation_fk Cython module not available.")
-            use_cython = False
-
-        n_bonds_per_unit = len(self.bond_angles_rad)
-        n_total_bonds = n_bonds_per_unit * n_repeat_units
-        all_angles = self.pre_generate_angles(n_samples, n_total_bonds)
-        if use_cython:
-            batch_size = 1000
-            n_batches = n_samples // batch_size
-            n_jobs = psutil.cpu_count(logical=False)
-
-            r2_results = Parallel(n_jobs=n_jobs, verbose=1)(
-                delayed(chain_fk.batch_end_to_end)
-                (np.ascontiguousarray(self.bond_lengths, dtype=np.float64),
-                 np.ascontiguousarray(self.bond_angles_rad, dtype=np.float64),
-                 np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
-                                                 batch_size],
-                                      dtype=np.float64), n_repeat_units)
-                for i in range(n_batches))
-
-            r2_results = np.vstack(r2_results)
-            # R^2 for full chain
-            r2_full = r2_results[:, -1]
-        else:
-            all_chains = self.build_all_chains_no_cython(
-                n_samples, n_repeat_units, all_angles)
-            vec = all_chains[:, -1, :] - all_chains[:, 0, :]
-            r2_full = np.sum(vec**2, axis=1)
-        # R or R^2
-        values = r2_full if use_r2 else np.sqrt(r2_full)
+        r2_results = self._square_end_to_end_distance(n_repeat_units,
+                                                      n_samples, use_cython)
+        r2_full = r2_results[:, -1]
+        values = np.sqrt(r2_full)
         hist, bin_edges = np.histogram(values, bins=bins, density=density)
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(bin_centers, hist, 'b-', lw=2)
-            xlabel = r"$R^2$ ($\mathrm{\AA}^2$)" if use_r2 else r"$R$ ($\mathrm{\AA}$)"
+            xlabel = r"$R$ ($\mathrm{\AA}$)"
             ylabel = "Probability Density" if density else "Counts"
             tool.format_subplot(xlabel, ylabel,
                                 "End-to-End Distance Distribution")
@@ -590,3 +564,124 @@ class PolymerPersistenceFK:
 
         if return_data:
             return bin_centers, hist
+
+    def calc_mean_end_to_end_monte_carlo(self,
+                                         n_repeat_units=20,
+                                         n_samples=150000,
+                                         plot=True,
+                                         return_data=False,
+                                         use_cython=True):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+           n_repeat_units (int): Maximum number of repeat units to plot
+           n_samples (int): Number of samples to use in Monte Carlo simulation
+           plot (bool): If True, plots the mean end-to-end distance
+           return_data (bool): If True, returns the mean end-to-end distance values as a list
+        """
+        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples,
+                                                  use_cython)
+        r = np.mean(np.sqrt(r2List), axis=0)
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_repeats, r, linewidth=2, color='blue', marker='o')
+            tool.format_subplot("Number of Repeat Units (N)",
+                                "Mean End-to-End Distance (Å)",
+                                "Monte Carlo Simulation of <R>")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return r
+
+    def calc_mean_r4_monte_carlo(self,
+                                 n_repeat_units=20,
+                                 n_samples=150000,
+                                 plot=True,
+                                 return_data=False,
+                                 use_cython=True):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+           n_repeat_units (int): Maximum number of repeat units to plot
+           n_samples (int): Number of samples to use in Monte Carlo simulation
+           plot (bool): If True, plots the <R^4> values
+           return_data (bool): If True, returns the <R^4> as a list
+        """
+        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples,
+                                                  use_cython)
+        r4 = np.mean(r2List**2, axis=0)
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_repeats, r4, linewidth=2, color='blue', marker='o')
+            tool.format_subplot("Number of Repeat Units (N)", "<$R^4$> (Å)",
+                                "Monte Carlo Simulation of $<R^4>$")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return r4
+
+    def wormlikechain_fitting_from_monte_carlo(self,
+                                               n_repeat_units=20,
+                                               n_samples=150000,
+                                               use_cython=True):
+        """
+        Fit the Worm-like Chain model to Monte Carlo simulation results.
+
+        Returns:
+            N_eff (float): Persistence length (in units of repeat units).
+            alpha (float): Scaling factor (sqrt of alpha_sq).
+        """
+        r2_data = self.calc_mean_square_end_to_end_distance(
+            n_repeat_units=n_repeat_units,
+            n_samples=n_samples,
+            return_data=True,
+            plot=False,
+            use_cython=use_cython)
+        n_values = np.arange(len(r2_data))
+
+        def wlc_model(n, N_eff, alpha_sq):
+            r2 = np.zeros_like(n, dtype=np.float64)
+            mask = n > 0
+            n_val = n[mask]
+            term = 1 - (N_eff / n_val) * (1 - np.exp(-n_val / N_eff))
+            r2[mask] = 2 * N_eff * alpha_sq * n_val * term
+            return r2
+
+        p0 = [2, np.sum(self.bond_lengths)**2]
+        bounds = ([0, 0], [np.inf, np.inf])
+
+        try:
+            popt, _ = curve_fit(wlc_model,
+                                n_values,
+                                r2_data,
+                                p0=p0,
+                                bounds=bounds)
+            N_eff_fit, alpha_sq_fit = popt
+            alpha_fit = np.sqrt(alpha_sq_fit)
+        except RuntimeError as e:
+            print(f"Curve fitting failed: {e}")
+            return None, None
+        print(f"N_eff_fit: {N_eff_fit:.3f}\nalpha: {alpha_fit:.3f}\n" +
+              f"Lp: {N_eff_fit * alpha_fit:.3f} Å")
+        n_smooth = np.linspace(0, len(r2_data) - 1, 200)
+        r2_fit = wlc_model(n_smooth, *popt)
+
+        plt.figure(figsize=(6, 5))
+        plt.plot(n_values, r2_data, 'bo', label='Monte Carlo Data')
+        plt.plot(
+            n_smooth,
+            r2_fit,
+            'r-',
+            linewidth=2,
+            alpha=0.7,
+            label=
+            f'WLC Fit\n$N_{{eff}}={N_eff_fit:.3f}$\n$\\alpha={alpha_fit:.3f}$')
+
+        tool.format_subplot("Number of Repeat Units (N)",
+                            "Mean Square End-to-End Distance (Å$^2$)",
+                            "Worm-like Chain Fitting")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+        return N_eff_fit, alpha_fit

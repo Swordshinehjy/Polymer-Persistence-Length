@@ -10,6 +10,7 @@ from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from . import tool
 from typing import Dict
+from scipy.optimize import curve_fit
 try:
     from . import chain_rotation
 except ImportError:
@@ -87,8 +88,10 @@ class PolymerPersistence:
         # --- Internal cache for lazy evaluation ---
         self._Mmat = None
         self._A_list = None
+        self._K_list = None  # List of <T (kron) T> matrices
         self._G_unit = None
         self._G_free_unit = None
+        self._G4_unit = None  # Generator matrix for R^4
         self._lambda_max = None
         self._correlation_length = None
         self._correlation_length_wlc = None
@@ -721,18 +724,9 @@ class PolymerPersistence:
             angles_per_position[:, mask] = sampled
         return angles_per_position
 
-    def calc_mean_square_end_to_end_distance(self,
-                                             n_repeat_units=20,
-                                             n_samples=150000,
-                                             return_data=False):
-        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
-        Args:
-            N (int): Maximum number of repeat units to plot
-            return_data (bool): If True, returns the mean square end-to-end distance values as a list
-        """
+    def _square_end_to_end_distance(self, n_repeat_units, n_samples):
         if self.bond_lengths is None or chain_rotation is None:
             raise ValueError("Bond lengths and chain_rotation must be set.")
-        n_repeats = np.arange(0, n_repeat_units + 1)
         length = len(self.bond_angles_rad)
         ch = self.generate_chain(n_repeat_units)
         batch_size = 1000
@@ -749,19 +743,113 @@ class PolymerPersistence:
                                                 batch_size],
                                      dtype=np.float64), length)
             for i in range(n_batches))
-        r2List = np.vstack(r2List)
+        return np.vstack(r2List)
+
+    def calc_mean_square_end_to_end_distance(self,
+                                             n_repeat_units=20,
+                                             n_samples=150000,
+                                             mode='MonteCarlo',
+                                             plot=True,
+                                             return_data=False):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+            n_repeat_units (int): Maximum number of repeat units to plot
+            n_samples (int): Number of samples to use in Monte Carlo simulation
+            mode (str): 'MonteCarlo' or 'TransferMatrix'
+            plot (bool): If True, plots the mean square end-to-end distance
+            return_data (bool): If True, returns the mean square end-to-end distance values as a list   
+        """
+        if mode == 'MonteCarlo':
+            return self.calc_mean_square_end_to_end_monte_carlo(
+                n_repeat_units, n_samples, plot, return_data)
+        elif mode == 'TransferMatrix':
+            return self.calc_mean_square_end_to_end_transfer_matrix(
+                n_repeat_units, plot, return_data)
+        else:
+            raise ValueError(
+                "Invalid mode. Please choose 'MonteCarlo' or 'TransferMatrix'")
+
+    def calc_mean_square_end_to_end_monte_carlo(self,
+                                                n_repeat_units=20,
+                                                n_samples=150000,
+                                                plot=True,
+                                                return_data=False):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+           n_repeat_units (int): Maximum number of repeat units to plot
+           n_samples (int): Number of samples to use in Monte Carlo simulation
+           plot (bool): If True, plots the mean square end-to-end distance
+           return_data (bool): If True, returns the mean square end-to-end distance values as a list
+        """
+        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
         msd_values = np.mean(r2List, axis=0)
-
-        plt.figure(figsize=(6, 5))
-        plt.plot(n_repeats, msd_values, linewidth=2, color='blue', marker='o')
-        tool.format_subplot("Number of Repeat Units (N)",
-                            "Mean Square End-to-End Distance (Å²)",
-                            "Monte Carlo Simulation of <R²>")
-        plt.tight_layout()
-        plt.show()
-
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_repeats,
+                     msd_values,
+                     linewidth=2,
+                     color='blue',
+                     marker='o')
+            tool.format_subplot("Number of Repeat Units (N)",
+                                "Mean Square End-to-End Distance (Å²)",
+                                "Monte Carlo Simulation of <R²>")
+            plt.tight_layout()
+            plt.show()
         if return_data:
             return msd_values
+
+    def calc_mean_end_to_end_monte_carlo(self,
+                                         n_repeat_units=20,
+                                         n_samples=150000,
+                                         plot=True,
+                                         return_data=False):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+           n_repeat_units (int): Maximum number of repeat units to plot
+           n_samples (int): Number of samples to use in Monte Carlo simulation
+           plot (bool): If True, plots the mean end-to-end distance
+           return_data (bool): If True, returns the mean end-to-end distance values as a list
+        """
+        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
+        r = np.mean(np.sqrt(r2List), axis=0)
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_repeats, r, linewidth=2, color='blue', marker='o')
+            tool.format_subplot("Number of Repeat Units (N)",
+                                "Mean End-to-End Distance (Å)",
+                                "Monte Carlo Simulation of <R>")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return r
+
+    def calc_mean_r4_monte_carlo(self,
+                                 n_repeat_units=20,
+                                 n_samples=150000,
+                                 plot=True,
+                                 return_data=False):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+           n_repeat_units (int): Maximum number of repeat units to plot
+           n_samples (int): Number of samples to use in Monte Carlo simulation
+           plot (bool): If True, plots the <R^4> values
+           return_data (bool): If True, returns the <R^4> as a list
+        """
+        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
+        r4 = np.mean(r2List**2, axis=0)
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_repeats, r4, linewidth=2, color='blue', marker='o')
+            tool.format_subplot("Number of Repeat Units (N)",
+                                "<R$^4$> (Å$^4$)",
+                                "Monte Carlo Simulation of <R$^4$>")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return r4
 
     def calculate_correlation_length_mc(self,
                                         n_repeat_units=20,
@@ -812,8 +900,7 @@ class PolymerPersistence:
 
         cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
             delayed(self._batch_cosVals_optimized)(
-                ch, all_angles[i * batch_size:(i + 1) *
-                               batch_size], length)
+                ch, all_angles[i * batch_size:(i + 1) * batch_size], length)
             for i in range(n_batches))
         cosList2 = np.vstack(cosList2)
 
@@ -938,9 +1025,8 @@ class PolymerPersistence:
             n_jobs = psutil.cpu_count(logical=False)
 
             cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
-                delayed(self._batch_cosVals_optimized)(
-                    ch, all_angles[i * batch_size:(i + 1) *
-                                   batch_size], length)
+                delayed(self._batch_cosVals_optimized)
+                (ch, all_angles[i * batch_size:(i + 1) * batch_size], length)
                 for i in range(n_batches))
             cosList2 = np.vstack(cosList2)
 
@@ -1016,8 +1102,8 @@ class PolymerPersistence:
 
     def calc_mean_square_end_to_end_transfer_matrix(self,
                                                     n_repeat_unit=20,
-                                                    return_data=False,
-                                                    plot=True):
+                                                    plot=True,
+                                                    return_data=False):
         """
         Calculates and plots the exact mean square end-to-end distance <R^2>
         as a function of the number of repeat units n from 0 to n_repeat_unit.
@@ -1184,3 +1270,428 @@ class PolymerPersistence:
         delta_r2 = s + n @ inv_I_minus_M @ p
         delta_r2_free = s1 + n1 @ inv_I_minus_M1 @ p1
         return np.sqrt(delta_r2 / delta_r2_free)
+
+    def calc_end_to_end_distribution(self,
+                                     n_repeat_units=20,
+                                     n_samples=150000,
+                                     bins=100,
+                                     density=True,
+                                     plot=True,
+                                     return_data=False):
+        """
+        Calculate the distribution of end-to-end distance (R)
+        for the FULL chain length.
+
+        Parameters
+        ----------
+        density : bool
+            If True, normalize histogram to PDF.
+        """
+        r2_results = self._square_end_to_end_distance(n_repeat_units,
+                                                      n_samples)
+        r2_full = r2_results[:, -1]
+        values = np.sqrt(r2_full)
+        hist, bin_edges = np.histogram(values, bins=bins, density=density)
+        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(bin_centers, hist, 'b-', lw=2)
+            xlabel = r"$R$ ($\mathrm{\AA}$)"
+            ylabel = "Probability Density" if density else "Counts"
+            tool.format_subplot(xlabel, ylabel,
+                                "End-to-End Distance Distribution")
+            plt.show()
+
+        if return_data:
+            return bin_centers, hist
+
+    def _compute_full_rotation_moments(self, fitf, limit=1000):
+        """
+        Calculates Boltzmann-averaged moments up to the second order.
+        Returns dictionary with keys: c, s, c2, s2, cs
+        """
+
+        def exp_energy(phi_deg):
+            return np.exp(-fitf(phi_deg) / self.kTval)
+
+        Z, _ = quad(exp_energy, 0, 360, limit=limit)
+        if Z == 0:
+            return {'c': 0, 's': 0, 'c2': 0, 's2': 0, 'cs': 0}
+
+        moments = {}
+        moments['c'], _ = quad(lambda x: np.cos(np.deg2rad(x)) * exp_energy(x),
+                               0,
+                               360,
+                               limit=limit)
+        moments['s'], _ = quad(lambda x: np.sin(np.deg2rad(x)) * exp_energy(x),
+                               0,
+                               360,
+                               limit=limit)
+        moments['c2'], _ = quad(
+            lambda x: np.cos(np.deg2rad(x))**2 * exp_energy(x),
+            0,
+            360,
+            limit=limit)
+        moments['s2'], _ = quad(
+            lambda x: np.sin(np.deg2rad(x))**2 * exp_energy(x),
+            0,
+            360,
+            limit=limit)
+        moments['cs'], _ = quad(lambda x: np.cos(np.deg2rad(x)) * np.sin(
+            np.deg2rad(x)) * exp_energy(x),
+                                0,
+                                360,
+                                limit=limit)
+
+        for k in moments:
+            moments[k] /= Z
+        return moments
+
+    def _compute_ris_moments(self, angles_deg, energies):
+        """Calculates moments for discrete RIS states."""
+        boltz = np.exp(-energies / self.kTval)
+        Z = np.sum(boltz)
+        if Z == 0:
+            return {
+                'c': 1,
+                's': 0,
+                'c2': 1,
+                's2': 0,
+                'cs': 0
+            }  # Default rigid 0 deg
+
+        rads = np.deg2rad(angles_deg)
+        c = np.cos(rads)
+        s = np.sin(rads)
+
+        return {
+            'c': np.sum(c * boltz) / Z,
+            's': np.sum(s * boltz) / Z,
+            'c2': np.sum(c**2 * boltz) / Z,
+            's2': np.sum(s**2 * boltz) / Z,
+            'cs': np.sum(c * s * boltz) / Z,
+        }
+
+    def _calculate_matrices(self):
+        """Constructs <T> (A_list) and <T kron T> (K_list) for the repeat unit."""
+        self._prepare_computational_data()
+        M = len(self.rotation_types)
+        A_list = []
+        K_list = []
+        # caches
+        continuous_cache = {}
+        ris_cache = {}
+        for i in range(M):
+            rot_id = int(self.rotation_types[i])
+            theta = float(self.bond_angles_rad[i])
+            # get moments <c>, <s>, etc.
+            moments = None
+            if rot_id == 0:
+                moments = {'c': 1.0, 's': 0.0, 'c2': 1.0, 's2': 0.0, 'cs': 0.0}
+            else:
+                is_ris = self.rotation_labels[rot_id]['type'] == 'ris'
+                if is_ris:
+                    if rot_id in self.ris_data:
+                        if rot_id not in ris_cache:
+                            angles, energies = self.ris_data[rot_id]
+                            ris_cache[rot_id] = self._compute_ris_moments(
+                                angles, energies)
+                        moments = ris_cache[rot_id]
+                    else:
+                        moments = {
+                            'c': 1.0,
+                            's': 0.0,
+                            'c2': 1.0,
+                            's2': 0.0,
+                            'cs': 0.0
+                        }
+                else:
+                    if rot_id in self._computational_data:
+                        if rot_id not in continuous_cache:
+                            fitf = self._computational_data[rot_id]['fitf']
+                            continuous_cache[
+                                rot_id] = self._compute_full_rotation_moments(
+                                    fitf)
+                        moments = continuous_cache[rot_id]
+                    else:
+                        moments = {
+                            'c': 1.0,
+                            's': 0.0,
+                            'c2': 1.0,
+                            's2': 0.0,
+                            'cs': 0.0
+                        }
+            # build <T> matrix (A_list)
+            # T = R_z(theta) @ R_x(phi)
+            # R_x = [[1, 0, 0], [0, c, -s], [0, s, c]]
+            # <R_x>
+            Rx_avg = np.array([[1, 0, 0], [0, moments['c'], -moments['s']],
+                               [0, moments['s'], moments['c']]])
+            c_theta, s_theta = np.cos(theta), np.sin(theta)
+            Rz = np.array([[c_theta, -s_theta, 0.0], [s_theta, c_theta, 0.0],
+                           [0.0, 0.0, 1]])
+            T_avg = Rz @ Rx_avg
+            A_list.append(T_avg)
+
+            # build <T kron T> matrix (K_list)
+            # T kron T = (Rz kron Rz) @ <Rx kron Rx>
+            Rz_kron_Rz = np.kron(Rz, Rz)
+
+            # construct <Rx kron Rx> element-wise
+            # Rx elements: 1, 0, 0, 0, c, -s, 0, s, c
+            # we need expectation of products of these.
+            # only non-zero blocks are involved.
+
+            # Helper to access moments
+            # def E(val):
+            #     return val  # constant
+            mc, ms = moments['c'], moments['s']
+            mc2, ms2, mcs = moments['c2'], moments['s2'], moments['cs']
+
+            # expected Rx (x) Rx 9x9
+            # row 0 (1 * row of Rx): [1, 0, 0,   0, c, -s,   0, s, c] -> Avg
+            # row0 = [1, 0, 0, 0, mc, -ms, 0, ms, mc]
+
+            # row 4 (c * row of Rx): [0, c*c, -c*s,  0, s*c, c*c ...] -> Avg
+            # Rx flat: 0:1, 4:c, 5:-s, 7:s, 8:c (others 0)
+
+            Rx_kron_Rx_avg = np.zeros((9, 9))
+
+            # indices where Rx is not fixed 0 or 1
+            # 0,0=1.
+            # 4,4=c^2, 4,5=-cs, 4,7=cs, 4,8=c^2
+            # 5,4=-cs, 5,5=s^2, 5,7=-s^2, 5,8=-cs
+            # 7,4=cs, 7,5=-s^2, 7,7=s^2, 7,8=cs
+            # 8,4=c^2, 8,5=-cs, 8,7=cs, 8,8=c^2
+
+            # cross terms with index 0 (1 * x)
+            # 0,0 = 1
+            # 0,4 = c, 0,5 = -s, etc...
+
+            # Rx = [[1,0,0],[0,c,-s],[0,s,c]]
+            # E[Rx_ij * Rx_kl]
+            for r1 in range(3):
+                for c1 in range(3):
+                    for r2 in range(3):
+                        for c2 in range(3):
+                            # Determine term type: 1, c, s, c^2, s^2, cs
+                            # term_type = (r1, c1, r2, c2)
+                            # val = 0.0
+                            # map matrix indices to value type
+                            def get_val_type(r, c):
+                                if r == 0 and c == 0: return '1'
+                                if r == 0 or c == 0: return '0'
+                                # sub-block 1..2
+                                if r == 1 and c == 1: return 'c'
+                                if r == 1 and c == 2: return '-s'
+                                if r == 2 and c == 1: return 's'
+                                if r == 2 and c == 2: return 'c'
+                                return '0'
+
+                            t1 = get_val_type(r1, c1)
+                            t2 = get_val_type(r2, c2)
+
+                            if t1 == '0' or t2 == '0':
+                                avg = 0.0
+                            elif t1 == '1':
+                                if t2 == '1': avg = 1.0
+                                elif t2 == 'c': avg = mc
+                                elif t2 == '-s': avg = -ms
+                                elif t2 == 's': avg = ms
+                            elif t2 == '1':
+                                if t1 == 'c': avg = mc
+                                elif t1 == '-s': avg = -ms
+                                elif t1 == 's': avg = ms
+                            else:
+                                # product of trig terms
+                                sign = 1
+                                if t1.startswith('-'):
+                                    sign *= -1
+                                    t1 = t1.strip('-')
+                                if t2.startswith('-'):
+                                    sign *= -1
+                                    t2 = t2.strip('-')
+
+                                comb = tuple(sorted((t1, t2)))
+                                if comb == ('c', 'c'): avg = mc2
+                                elif comb == ('s', 's'): avg = ms2
+                                elif comb == ('c', 's'): avg = mcs
+                                avg *= sign
+                            # place in 9x9
+                            # row index: r1*3 + r2
+                            # col index: c1*3 + c2
+                            Rx_kron_Rx_avg[r1 * 3 + r2, c1 * 3 + c2] = avg
+            K_list.append(Rz_kron_Rz @ Rx_kron_Rx_avg)
+        self._A_list = A_list
+        self._K_list = K_list
+
+    def build_G4_unit(self):
+        """
+        Builds the 17x17 unit transfer matrix for <R^4>.
+        State Vector: [R^4, R^2*R, R (kron) R, R, 1]^T
+        Dimensions:   [1,   3,     9,          3, 1]
+        """
+        num_bonds = len(self.bond_lengths)
+        if self._A_list is None or self._K_list is None:
+            self._calculate_matrices()
+        A_list = self._A_list
+        K_list = self._K_list
+        G4_unit = np.eye(17)
+        # Indices
+        # R4: 0
+        # R2_R: 1:4
+        # RR: 4:13
+        # R: 13:16
+        # 1: 16
+        for i in range(num_bonds):
+            l = self.bond_lengths[i]
+            # standard 1D vector for dot products and simple assignments
+            vec_l = np.array([l, 0.0, 0.0])
+            # column vector (3,1) for Kronecker products requiring (9,3) output
+            vec_l_col = vec_l[:, None]
+            l_sq = l**2
+            l_4 = l**4
+            next_idx = (i + 1) % num_bonds
+            T = A_list[next_idx]  # T_{i+1}
+            K = K_list[next_idx]  # <T_{i+1} kron T_{i+1}>
+            # pre-compute block tensors
+            # block: 2 * sum_m l_m <T_kj T_mn> (For Row R2_R -> Col RR)
+            # shape (3, 9)
+            # reshape K to (3,3,3,3) -> indices k, m, j, n (based on kron construction)
+            K_reshaped = K.reshape(3, 3, 3, 3)
+            block_R2R_to_RR = 2 * np.einsum('m, kmjn -> kjn', vec_l,
+                                            K_reshaped).reshape(3, 9)
+            # block: 4 * (l kron l)^T * K (For Row R4 -> Col RR)
+            # l_kron_l as 1D (9,) is fine for dotting with K if we treat it as row
+            l_kron_l = np.kron(vec_l, vec_l)
+            block_R4_to_RR = 4 * l_kron_l.T @ K + 2 * l_sq * np.reshape(
+                np.eye(3), (1, 9))
+            # construct G4_i
+            G = np.zeros((17, 17))
+            # row 0: R^4
+            G[0, 0] = 1.0
+            G[0, 1:4] = 4 * vec_l.T @ T
+            G[0, 4:13] = block_R4_to_RR
+            G[0, 13:16] = 4 * l_sq * vec_l.T @ T
+            G[0, 16] = l_4
+            # row 1-3: R^2 R
+            G[1:4, 1:4] = T
+            G[1:4, 4:13] = block_R2R_to_RR + np.outer(vec_l,
+                                                      np.reshape(np.eye(3), 9))
+            G[1:4, 13:16] = 2 * np.outer(vec_l, vec_l.T @ T) + l_sq * T
+            G[1:4, 16] = l_sq * vec_l
+            # row 4-12: R (kron) R
+            G[4:13, 4:13] = K
+            # Col R: <T kron l> + <l kron T>
+            # FIX: Use vec_l_col (3,1) to ensure result is (9,3)
+            T_kron_l = np.kron(T, vec_l_col)
+            l_kron_T = np.kron(vec_l_col, T)
+            G[4:13, 13:16] = T_kron_l + l_kron_T
+            G[4:13, 16] = l_kron_l
+            # row 13-15: R
+            G[13:16, 13:16] = T
+            G[13:16, 16] = vec_l
+            # row 16: 1
+            G[16, 16] = 1.0
+            G4_unit = G4_unit @ G
+        self._G4_unit = G4_unit
+
+    def calc_mean_r4_transfer_matrix(self,
+                                     n_repeat_unit=20,
+                                     plot=True,
+                                     return_data=False):
+        """
+        Calculates and plots the exact mean square end-to-end distance <R^2>
+        as a function of the number of repeat units n from 0 to n_repeat_unit.
+        Args:
+            n_repeat_unit (int): Maximum number of repeat units to calculate.
+            return_data (bool, optional): Whether to return the R2 data. Defaults to False.
+            plot (optional): Whether to plot the results. Defaults to True.
+        Returns:
+            r2_array.
+        """
+        n_array = np.arange(n_repeat_unit + 1)
+        r4_array = np.zeros(len(n_array))
+        if self._G4_unit is None:
+            self.build_G4_unit()
+        G4_unit = self._G4_unit
+        for i, n in enumerate(n_array):
+            if n == 0:
+                r4_array[i] = 0.0
+            else:
+                G_chain = np.linalg.matrix_power(G4_unit, n)
+                r4_array[i] = G_chain[0, 16]
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_array, r4_array, 'bo-', linewidth=2)
+            tool.format_subplot("Number of Repeat Units (N)",
+                                "<R$^4$> (Å$^4$)",
+                                "Transfer Matrix Simulation of <R$^4$>")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return r4_array
+
+    def wormlikechain_fitting_from_monte_carlo(self,
+                                               n_repeat_units=20,
+                                               n_samples=150000):
+        """
+        Fit the Worm-like Chain model to Monte Carlo simulation results.
+
+        Returns:
+            N_eff (float): Persistence length (in units of repeat units).
+            alpha (float): Scaling factor (sqrt of alpha_sq).
+        """
+        r2_data = self.calc_mean_square_end_to_end_distance(
+            n_repeat_units=n_repeat_units,
+            n_samples=n_samples,
+            return_data=True,
+            plot=False)
+        n_values = np.arange(len(r2_data))
+
+        def wlc_model(n, N_eff, alpha_sq):
+            r2 = np.zeros_like(n, dtype=np.float64)
+            mask = n > 0
+            n_val = n[mask]
+            term = 1 - (N_eff / n_val) * (1 - np.exp(-n_val / N_eff))
+            r2[mask] = 2 * N_eff * alpha_sq * n_val * term
+            return r2
+
+        p0 = [2, np.sum(self.bond_lengths)**2]
+        bounds = ([0, 0], [np.inf, np.inf])
+
+        try:
+            popt, _ = curve_fit(wlc_model,
+                                n_values,
+                                r2_data,
+                                p0=p0,
+                                bounds=bounds)
+            N_eff_fit, alpha_sq_fit = popt
+            alpha_fit = np.sqrt(alpha_sq_fit)
+        except RuntimeError as e:
+            print(f"Curve fitting failed: {e}")
+            return None, None
+        print(f"N_eff_fit: {N_eff_fit:.3f}\nalpha: {alpha_fit:.3f}\n" +
+              f"Lp: {N_eff_fit * alpha_fit:.3f} Å")
+        n_smooth = np.linspace(0, len(r2_data) - 1, 200)
+        r2_fit = wlc_model(n_smooth, *popt)
+
+        plt.figure(figsize=(6, 5))
+        plt.plot(n_values, r2_data, 'bo', label='Monte Carlo Data')
+        plt.plot(
+            n_smooth,
+            r2_fit,
+            'r-',
+            alpha=0.7,
+            linewidth=2,
+            label=
+            f'WLC Fit\n$N_{{eff}}={N_eff_fit:.3f}$\n$\\alpha={alpha_fit:.3f}$')
+
+        tool.format_subplot("Number of Repeat Units (N)",
+                            "Mean Square End-to-End Distance (Å$^2$)",
+                            "Worm-like Chain Fitting")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+        return N_eff_fit, alpha_fit
