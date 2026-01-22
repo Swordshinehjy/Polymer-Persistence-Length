@@ -517,6 +517,8 @@ class PolymerPersistenceDependentDihedral:
         """
         if self._G_unit is None:
             self.build_G_unit()
+        if self._lambda_max is None:
+            self.run_calculation()
         G_unit = self._G_unit
         M = G_unit[1:4, 1:4]
         p = G_unit[1:4, 4]

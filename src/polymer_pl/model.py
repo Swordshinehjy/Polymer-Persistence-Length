@@ -11,6 +11,7 @@ from scipy.interpolate import interp1d
 from . import tool
 from typing import Dict
 from scipy.optimize import curve_fit
+from scipy.special import spherical_jn
 try:
     from . import chain_rotation
 except ImportError:
@@ -394,6 +395,8 @@ class PolymerPersistence:
         # Build the generator matrix for the repeating unit
         if self._G_unit is None:
             self.build_G_unit()
+        if self._lambda_max is None:
+            self.run_calculation()
         G_unit = self._G_unit
         # Extract submatrices
         # M: rotation matrix (3x3)
