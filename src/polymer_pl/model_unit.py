@@ -98,12 +98,31 @@ class PolymerPersistenceUnit:
         self._full_data = {}
         self.fitting_method = fitting_method
         self.param_n = param_n
-
+        self._build_rotation_encoding()
         # Precompute pair cache
         self._build_pair_cache()
 
+    def _build_rotation_encoding(self):
+        """Build mapping from rotation type strings to integers"""
+        # Collect all unique rotation types
+        all_rot_types = set()
+        for c1 in self.unit_dict.keys():
+            for c2 in self.unit_dict.keys():
+                key = c1 + c2
+                if key in self.rotation_dict:
+                    all_rot_types.update([self.rotation_dict[key]])
+            all_rot_types.update(self.unit_dict[c1]['rotation'])
+
+        # Create bidirectional mapping
+        self.rot_to_int = {
+            rot: i
+            for i, rot in enumerate(sorted(all_rot_types))
+        }
+        self.int_to_rot = {i: rot for rot, i in self.rot_to_int.items()}
+        print(f"Rotation encoding: {len(self.rot_to_int)} unique types")
+
     def _build_pair_cache(self):
-        """Precompute all possible unit pairs"""
+        """Precompute all possible unit pairs with integer-encoded rotations"""
         all_chars = list(self.unit_dict.keys())
         self.pair_cache = {}
 
@@ -119,10 +138,14 @@ class PolymerPersistenceUnit:
                     self.rotation_dict[key]
                 ]
 
+                # Encode rotations as integers
+                r_int = np.array([self.rot_to_int[r] for r in r_list],
+                                 dtype=np.int32)
+
                 self.pair_cache[key] = {
                     'bonds': np.array(b_list),
                     'angles': np.array(a_list),
-                    'rotations': np.array(r_list),
+                    'rotations': r_int,
                     'length': len(b_list)
                 }
 
@@ -130,21 +153,7 @@ class PolymerPersistenceUnit:
         """
         Generate structural information for random copolymer chains
         
-        Parameters:
-        -----------
-        n_repeats : int
-            Number of repeat units
-        n_samples : int
-            Number of samples
-            
-        Returns:
-        --------
-        list of dict: Structural information for each sample, containing:
-            - bonds: Bond length array
-            - angles: Bond angle array (in radians)
-            - rotations: Rotation type array
-            - unit_lengths: Number of bonds per repeat unit
-            - chain: Chain sequence string
+        Returns list of dicts with integer-encoded rotations and padded arrays
         """
         n_pos = len(self.connection)
         conn_arr = [np.array(c) for c in self.connection]
@@ -159,45 +168,59 @@ class PolymerPersistenceUnit:
                                  p=self.probability[i])
             chains_matrix[:, target_cols] = choices
 
-        # Batch generate structural information
+        # NEW: Pre-calculate maximum possible bonds across all pair types
+        max_bonds_per_pair = max(data['length']
+                                 for data in self.pair_cache.values())
+        # Worst case: maximum bonds per pair × total number of pairs
+        total_max_bonds = max_bonds_per_pair * n_repeats * n_pos
+
+        # Batch generate structural information with padding
         final_results = []
         for row in chains_matrix:
-            res = {
-                'bonds': [],
-                'angles': [],
-                'rotations': [],
-                'unit_lengths': [],
-                'chain': ''.join(row)
-            }
+            # Pre-allocate padded arrays
+            bonds_pad = np.zeros(total_max_bonds)
+            angles_pad = np.zeros(total_max_bonds)
+            rotations_pad = np.zeros(total_max_bonds, dtype=np.int32)
+            mask = np.zeros(total_max_bonds, dtype=bool)
+            unit_lengths = []
 
+            actual_idx = 0
             for r in range(n_repeats):
-                current_unit_total_len = 0
+                unit_start = actual_idx
 
                 for p in range(n_pos):
                     idx = r * n_pos + p
                     curr = row[idx]
                     nxt = row[(idx + 1) % len(row)]
-
                     data = self.pair_cache[curr + nxt]
 
-                    res['bonds'].extend(data['bonds'])
-                    res['angles'].extend(data['angles'])
-                    res['rotations'].extend(data['rotations'])
-                    current_unit_total_len += data['length']
+                    n_bonds = data['length']
+                    bonds_pad[actual_idx:actual_idx + n_bonds] = data['bonds']
+                    angles_pad[actual_idx:actual_idx +
+                               n_bonds] = data['angles']
+                    rotations_pad[actual_idx:actual_idx +
+                                  n_bonds] = data['rotations']
+                    mask[actual_idx:actual_idx + n_bonds] = True
+                    actual_idx += n_bonds
 
-                res['unit_lengths'].append(current_unit_total_len)
+                unit_lengths.append(actual_idx - unit_start)
 
-            # Angle correction
-            if res['angles']:
-                res['angles'] = [res['angles'][-1]] + res['angles'][:-1]
+            # Angle correction on valid portion
+            valid_angles = angles_pad[mask]
+            if len(valid_angles) > 0:
+                valid_angles = np.concatenate([[valid_angles[-1]],
+                                               valid_angles[:-1]])
+                angles_pad[mask] = valid_angles
 
-            # Convert to numpy arrays
-            res['bonds'] = np.array(res['bonds'])
-            res['angles'] = np.deg2rad(np.array(res['angles']))
-            res['rotations'] = np.array(res['rotations'])
-            res['unit_lengths'] = np.array(res['unit_lengths'])
-
-            final_results.append(res)
+            final_results.append({
+                'bonds': bonds_pad,
+                'angles': np.deg2rad(angles_pad),
+                'rotations': rotations_pad,  # Integer encoded
+                'mask': mask,
+                'unit_lengths': np.array(unit_lengths),
+                'chain': ''.join(row),
+                'actual_length': actual_idx
+            })
 
         return final_results
 
@@ -297,6 +320,8 @@ class PolymerPersistenceUnit:
                     "inv_cdf": inv_cdf,
                     "x_values": x_values,
                     "cum_dist": cum_dist,
+                    'rot_int':
+                    self.rot_to_int[rot_id],  # NEW: Store integer encoding
                     **info
                 }
             except FileNotFoundError:
@@ -347,45 +372,74 @@ class PolymerPersistenceUnit:
         plt.tight_layout()
         plt.show()
 
-    def pre_generate_angles_copolymer(self, chain_info):
+    def pre_generate_angles_copolymer_batch(self, chains_info):
         """
-        Generate dihedral angles for a single copolymer chain
+        NEW: Batch generate dihedral angles for multiple chains at once
         
         Parameters:
         -----------
-        chain_info : dict
-            Dictionary containing 'rotations' key
+        chains_info : list of dict
+            List of chain information dictionaries
             
         Returns:
         --------
-        np.ndarray: Array of dihedral angles (in radians)
+        list of np.ndarray: List of dihedral angle arrays (in radians)
         """
         self._prepare_full_data()
 
-        rotation_types = chain_info['rotations']
-        n_bonds = len(rotation_types)
+        n_chains = len(chains_info)
+        max_len = max(info['actual_length'] for info in chains_info)
 
+        # Stack all rotation arrays
+        all_rotations = np.zeros((n_chains, max_len), dtype=np.int32)
+        all_masks = np.zeros((n_chains, max_len), dtype=bool)
+
+        for i, info in enumerate(chains_info):
+            n = info['actual_length']
+            all_rotations[i, :n] = info['rotations'][:n]
+            all_masks[i, :n] = info['mask'][:n]
+
+        # Pre-allocate result
+        angles_deg = np.zeros((n_chains, max_len))
+
+        # Generate random values once
         rng = np.random.default_rng()
-        rand_vals = rng.random(n_bonds)
-        angles_deg = np.zeros(n_bonds)
+        rand_vals = rng.random((n_chains, max_len))
 
-        for rot_type, data_type in self._full_data.items():
-            mask = rotation_types == rot_type
+        # Process each rotation type in batch
+        for rot_str, data_type in self._full_data.items():
+            rot_int = data_type['rot_int']
+            mask = (all_rotations == rot_int) & all_masks
+
             if np.any(mask):
                 inv_cdf = data_type['inv_cdf']
                 angles_deg[mask] = inv_cdf(rand_vals[mask])
 
-        for ris_id, (ang_deg, energies) in self.ris_data.items():
-            mask = (rotation_types == ris_id)
-            if not np.any(mask):
-                continue
+        # Process RIS types in batch
+        for rot_str, (ang_deg, energies) in self.ris_data.items():
+            rot_int = self.rot_to_int[rot_str]
+            mask = (all_rotations == rot_int) & all_masks
 
-            boltz = np.exp(-energies / self.kTval)
-            prob = boltz / boltz.sum()
-            sampled = rng.choice(ang_deg, size=np.sum(mask), p=prob)
-            angles_deg[mask] = sampled
+            if np.any(mask):
+                boltz = np.exp(-energies / self.kTval)
+                prob = boltz / boltz.sum()
+                n_samples = np.sum(mask)
+                sampled = rng.choice(ang_deg, size=n_samples, p=prob)
+                angles_deg[mask] = sampled
 
-        return np.deg2rad(angles_deg)
+        # Convert to list of arrays with actual lengths
+        result = []
+        for i, info in enumerate(chains_info):
+            n = info['actual_length']
+            result.append(np.deg2rad(angles_deg[i, :n]))
+
+        return result
+
+    def pre_generate_angles_copolymer(self, chain_info):
+        """
+        Generate dihedral angles for a single copolymer chain (legacy compatibility)
+        """
+        return self.pre_generate_angles_copolymer_batch([chain_info])[0]
 
     def build_chain_copolymer(self, chain_info, all_dihedrals):
         """
@@ -394,7 +448,7 @@ class PolymerPersistenceUnit:
         Parameters:
         -----------
         chain_info : dict
-            Dictionary containing 'bonds', 'angles', 'unit_lengths'
+            Dictionary containing 'bonds', 'angles', 'unit_lengths', 'mask'
         all_dihedrals : np.ndarray
             Array of dihedral angles (in radians)
             
@@ -402,8 +456,11 @@ class PolymerPersistenceUnit:
         --------
         np.ndarray: Chain coordinates with shape (n_units+1, 3), containing only unit endpoints
         """
-        all_l = chain_info['bonds']
-        theta = chain_info['angles']
+        n = chain_info['actual_length']
+        mask = chain_info['mask'][:n]
+
+        all_l = chain_info['bonds'][:n][mask[:n]]
+        theta = chain_info['angles'][:n][mask[:n]]
         unit_lengths = chain_info['unit_lengths']
         n_bonds = len(all_l)
 
@@ -444,47 +501,41 @@ class PolymerPersistenceUnit:
                                         use_cython=True):
         """
         Monte Carlo calculation of correlation length using forward kinematics.
-        Parameters:
-        -----------
-        n_repeat_units : int
-            Number of repeat units to simulate
-        n_samples : int
-            Number of Monte Carlo samples
-        plot : bool
-            Whether to plot the correlation function
-        return_data : bool
-            Whether to return the correlation data
-        Returns:
-        --------
-        float: Correlation length
         """
         if chain_fk is None and use_cython:
             print('No cython module found.')
             use_cython = False
+
         print(f"Generating {n_samples} copolymer chains...")
         chains_info = self.generate_copolymer_chains(n_repeat_units, n_samples)
+
+        print("Batch generating dihedral angles...")
+        all_dihedrals = self.pre_generate_angles_copolymer_batch(chains_info)
+
         n_jobs = psutil.cpu_count(logical=False)
         print(f"Building chain coordinates using {n_jobs} parallel jobs...")
 
         # Build chain coordinates in parallel
-        def build_single_chain(chain_info):
-            dihedrals = self.pre_generate_angles_copolymer(chain_info)
+        def build_single_chain(chain_info, dihedrals):
             if use_cython:
+                n = chain_info['actual_length']
+                mask = chain_info['mask'][:n]
                 return chain_fk.build_chain_copolymer_cy(
-                    chain_info['bonds'], chain_info['angles'],
+                    chain_info['bonds'][:n][mask[:n]],
+                    chain_info['angles'][:n][mask[:n]],
                     chain_info['unit_lengths'], dihedrals)
             else:
                 return self.build_chain_copolymer(chain_info, dihedrals)
 
         all_chains = Parallel(verbose=1, n_jobs=n_jobs)(
-            delayed(build_single_chain)(chain_info)
-            for chain_info in chains_info)
+            delayed(build_single_chain)(chains_info[i], all_dihedrals[i])
+            for i in range(len(chains_info)))
 
-        all_chains = np.array(all_chains)  # shape: (n_samples, n_units+1, 3)
+        all_chains = np.array(all_chains)
 
         print(f"Chain shape: {all_chains.shape}")
 
-        # Calculate correlation: using unit endpoint positions
+        # Calculate correlation
         all_vectors = all_chains[:, 1:, :] - all_chains[:, :-1, :]
         v_ref = all_vectors[:, 0:1, :]
         dots = np.sum(all_vectors * v_ref, axis=2)
@@ -511,6 +562,7 @@ class PolymerPersistenceUnit:
 
         print(f"\nMonte Carlo Result:")
         print(f"Correlation Length: {corr_length:.6f}")
+
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(x_fit, y_fit, 'bo', label='Log Correlation')
@@ -523,82 +575,39 @@ class PolymerPersistenceUnit:
             tool.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
                                 "Log of Correlation Function")
             plt.show()
+
         if return_data:
             return corr_length
-
-    def plot_chain(self, n_repeat_units, colormap='jet', rotate=False):
-        """
-        Plot a single polymer chain in 3D (only showing unit endpoints).
-        
-        Parameters:
-        -----------
-        n_repeat_units : int
-            Number of repeat units
-        colormap : str
-            Colormap for visualization
-        rotate : bool
-            Whether to use random dihedral angles (True) or all zeros (False)
-        """
-        chains_info = self.generate_copolymer_chains(n_repeat_units, 1)
-        chain_info = chains_info[0]
-
-        if rotate:
-            all_angles = self.pre_generate_angles_copolymer(chain_info)
-        else:
-            all_angles = np.zeros(len(chain_info['rotations']))
-
-        chain = self.build_chain_copolymer(chain_info, all_angles)
-
-        fig = plt.figure(figsize=(6, 5))
-        ax = fig.add_subplot(111, projection='3d')
-        ax.scatter(chain[:, 0],
-                   chain[:, 1],
-                   chain[:, 2],
-                   s=50,
-                   c='red',
-                   marker='o')
-
-        colors = plt.get_cmap(colormap)
-        n_units = len(chain) - 1
-
-        for i in range(n_units):
-            ax.plot([chain[i][0], chain[i + 1][0]],
-                    [chain[i][1], chain[i + 1][1]],
-                    [chain[i][2], chain[i + 1][2]],
-                    color=colors(i / n_units),
-                    linewidth=2)
-        ax.set_aspect('equal', adjustable='box')
-        ax.set_xlabel('X (Å)')
-        ax.set_ylabel('Y (Å)')
-        ax.set_zlabel('Z (Å)')
-        plt.title('Polymer Chain (Unit Endpoints)')
-        plt.show()
 
     def _square_end_to_end_distance(self, n_repeat_units, n_samples,
                                     use_cython):
         if chain_fk is None and use_cython:
             print('No cython module found.')
             use_cython = False
+
         chains_info = self.generate_copolymer_chains(n_repeat_units, n_samples)
+        all_dihedrals = self.pre_generate_angles_copolymer_batch(chains_info)
+
         n_jobs = psutil.cpu_count(logical=False)
 
-        # Build chain coordinates in parallel
-        def build_single_chain(chain_info):
-            dihedrals = self.pre_generate_angles_copolymer(chain_info)
+        def build_single_chain(chain_info, dihedrals):
             if use_cython:
+                n = chain_info['actual_length']
+                mask = chain_info['mask'][:n]
                 return chain_fk.build_chain_copolymer_cy(
-                    chain_info['bonds'], chain_info['angles'],
+                    chain_info['bonds'][:n][mask[:n]],
+                    chain_info['angles'][:n][mask[:n]],
                     chain_info['unit_lengths'], dihedrals)
             else:
                 return self.build_chain_copolymer(chain_info, dihedrals)
 
         all_chains = Parallel(verbose=1, n_jobs=n_jobs)(
-            delayed(build_single_chain)(chain_info)
-            for chain_info in chains_info)
+            delayed(build_single_chain)(chains_info[i], all_dihedrals[i])
+            for i in range(len(chains_info)))
 
-        all_chains = np.array(all_chains)  # shape: (n_samples, n_units+1, 3)
+        all_chains = np.array(all_chains)
 
-        vec = all_chains[:, :, :] - all_chains[:, 0:1:]
+        vec = all_chains[:, :, :] - all_chains[:, 0:1, :]
         r2_results = np.sum(vec**2, axis=2)
         return r2_results
 
@@ -723,8 +732,8 @@ class PolymerPersistenceUnit:
         if plot:
             plt.figure(figsize=(6, 5))
             plt.plot(n_repeats, r4, linewidth=2, color='blue', marker='o')
-            tool.format_subplot("Number of Repeat Units (N)", "<$R^4$> (Å)",
-                                "Monte Carlo Simulation of $<R^4>$")
+            tool.format_subplot("Number of Repeat Units (N)", "<R$^4$> (Å)",
+                                "Monte Carlo Simulation of <R$^4$>")
             plt.tight_layout()
             plt.show()
         if return_data:

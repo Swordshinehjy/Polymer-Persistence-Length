@@ -11,7 +11,7 @@ from scipy.interpolate import interp1d
 from . import tool
 from typing import Dict
 from scipy.optimize import curve_fit
-from scipy.special import spherical_jn
+
 try:
     from . import chain_rotation
 except ImportError:
