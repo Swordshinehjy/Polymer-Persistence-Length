@@ -11,6 +11,7 @@ from scipy.interpolate import interp1d
 from . import tool
 from typing import Dict
 from scipy.optimize import curve_fit
+from scipy.stats import gaussian_kde
 
 try:
     from . import chain_rotation
@@ -727,9 +728,13 @@ class PolymerPersistence:
             angles_per_position[:, mask] = sampled
         return angles_per_position
 
-    def _square_end_to_end_distance(self, n_repeat_units, n_samples):
+    def _square_end_to_end_distance(self,
+                                    n_repeat_units,
+                                    n_samples,
+                                    use_cython=True):
         if self.bond_lengths is None or chain_rotation is None:
-            raise ValueError("Bond lengths and chain_rotation must be set.")
+            print("Bond lengths and chain_rotation must be set.")
+            use_cython = False
         length = len(self.bond_angles_rad)
         ch = self.generate_chain(n_repeat_units)
         batch_size = 1000
@@ -739,14 +744,22 @@ class PolymerPersistence:
             [0], self.rotation_types[np.arange(len(ch) - 1) % length]
         ])[:-1].astype(np.int64)
         all_angles = self.pre_generate_angles(n_samples, flat_rotation)
-        r2List = Parallel(n_jobs=n_jobs, verbose=1)(
-            delayed(chain_rotation.batch_r2_cython)(
-                np.ascontiguousarray(ch, dtype=np.float64),
-                np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
-                                                batch_size],
-                                     dtype=np.float64), length)
-            for i in range(n_batches))
-        return np.vstack(r2List)
+        if use_cython:
+            r2List = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(chain_rotation.batch_r2_cython)(
+                    np.ascontiguousarray(ch, dtype=np.float64),
+                    np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
+                                                    batch_size],
+                                         dtype=np.float64), length)
+                for i in range(n_batches))
+            return np.vstack(r2List)
+        else:
+            coords = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(tool.randomRotate)(ch, all_angles[i], flat_rotation)
+                for i in range(n_samples))
+            # np.array(coords) (n_samples, n_repeat_units, 3)
+            r2List = np.sum(np.array(coords)**2, axis=-1)
+            return r2List[:, np.arange(0, r2List.shape[1], length)]
 
     def calc_mean_square_end_to_end_distance(self,
                                              n_repeat_units=20,
@@ -856,7 +869,8 @@ class PolymerPersistence:
 
     def calculate_correlation_length_mc(self,
                                         n_repeat_units=20,
-                                        n_samples=150000):
+                                        n_samples=150000,
+                                        use_cython=True):
         """
         Calculate correlation length using Monte Carlo sampling.
         
@@ -880,7 +894,7 @@ class PolymerPersistence:
             print(
                 "Error: chain_rotation module not available. Monte Carlo simulation cannot be performed."
             )
-            return None
+            use_cython = False
 
         # Generate the base chain
         ch = self.generate_chain(n_repeat_units)
@@ -900,13 +914,26 @@ class PolymerPersistence:
         batch_size = 1000
         n_batches = n_samples // batch_size
         n_jobs = psutil.cpu_count(logical=False)
-
-        cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
-            delayed(self._batch_cosVals_optimized)(
-                ch, all_angles[i * batch_size:(i + 1) * batch_size], length)
-            for i in range(n_batches))
-        cosList2 = np.vstack(cosList2)
-
+        if use_cython:
+            cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(self._batch_cosVals_optimized)
+                (ch, all_angles[i * batch_size:(i + 1) * batch_size], length)
+                for i in range(n_batches))
+            cosList2 = np.vstack(cosList2)
+        else:
+            coords = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(tool.randomRotate)(ch, all_angles[i], flat_rotation)
+                for i in range(n_samples))
+            # np.array(coords) shape (n_samples, n_repeat_units, 3)
+            all_coords = np.array(coords)
+            k_values = np.arange(length, ch.shape[0], length)
+            vectors = all_coords[:, k_values, :] - all_coords[:, k_values -
+                                                              length, :]
+            v_ref = vectors[:, 0:1, :]
+            dots = np.sum(vectors * v_ref, axis=2)
+            norms = np.linalg.norm(vectors, axis=2) * np.linalg.norm(v_ref,
+                                                                     axis=2)
+            cosList2 = np.clip(dots / norms, -1, 1)
         # Calculate correlation length
         corr2 = np.mean(cosList2, axis=0)
         repeat_units = np.arange(len(corr2))
@@ -984,7 +1011,8 @@ class PolymerPersistence:
                                   n_samples=150000,
                                   start_idx=1,
                                   end_idx=10,
-                                  return_data=False):
+                                  return_data=False,
+                                  use_cython=True):
         """
         Plot the correlation function and its exponential fit.
         
@@ -1009,7 +1037,7 @@ class PolymerPersistence:
                 print(
                     "Error: chain_rotation module not available. Plot cannot be generated."
                 )
-                return
+                use_cython = False
 
             # Generate the base chain
             ch = self.generate_chain(n_repeat_units)
@@ -1027,12 +1055,28 @@ class PolymerPersistence:
             n_batches = n_samples // batch_size
             n_jobs = psutil.cpu_count(logical=False)
 
-            cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
-                delayed(self._batch_cosVals_optimized)
-                (ch, all_angles[i * batch_size:(i + 1) * batch_size], length)
-                for i in range(n_batches))
-            cosList2 = np.vstack(cosList2)
-
+            if use_cython:
+                cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
+                    delayed(self._batch_cosVals_optimized)(
+                        ch, all_angles[i * batch_size:(i + 1) *
+                                       batch_size], length)
+                    for i in range(n_batches))
+                cosList2 = np.vstack(cosList2)
+            else:
+                coords = Parallel(n_jobs=n_jobs,
+                                  verbose=1)(delayed(tool.randomRotate)(
+                                      ch, all_angles[i], flat_rotation)
+                                             for i in range(n_samples))
+                # np.array(coords) shape (n_samples, n_repeat_units, 3)
+                all_coords = np.array(coords)
+                k_values = np.arange(length, ch.shape[0], length)
+                vectors = all_coords[:, k_values, :] - all_coords[:, k_values -
+                                                                  length, :]
+                v_ref = vectors[:, 0:1, :]
+                dots = np.sum(vectors * v_ref, axis=2)
+                norms = np.linalg.norm(vectors, axis=2) * np.linalg.norm(
+                    v_ref, axis=2)
+                cosList2 = np.clip(dots / norms, -1, 1)
             # Calculate correlation function
             corr2 = np.mean(cosList2, axis=0)
             repeat_units = np.arange(len(corr2))
@@ -1277,36 +1321,45 @@ class PolymerPersistence:
     def calc_end_to_end_distribution(self,
                                      n_repeat_units=20,
                                      n_samples=150000,
-                                     bins=100,
-                                     density=True,
+                                     grid_points=400,
+                                     bw_method='scott',
                                      plot=True,
-                                     return_data=False):
+                                     return_data=False,
+                                     use_cython=True):
         """
-        Calculate the distribution of end-to-end distance (R)
-        for the FULL chain length.
+        Calculate smooth end-to-end distance distribution using KDE.
 
         Parameters
         ----------
-        density : bool
-            If True, normalize histogram to PDF.
+        grid_points : int
+            Number of points for KDE evaluation grid.
+        bw_method : str or float
+            Bandwidth for gaussian_kde ('scott', 'silverman', or float).
         """
+
+        # 1. Generate end-to-end distances
         r2_results = self._square_end_to_end_distance(n_repeat_units,
-                                                      n_samples)
+                                                      n_samples, use_cython)
         r2_full = r2_results[:, -1]
         values = np.sqrt(r2_full)
-        hist, bin_edges = np.histogram(values, bins=bins, density=density)
-        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+        kde = gaussian_kde(values, bw_method=bw_method)
+
+        r_min, r_max = values.min(), values.max()
+        r_grid = np.linspace(r_min, r_max, grid_points)
+        pdf = kde(r_grid)
+
         if plot:
             plt.figure(figsize=(6, 5))
-            plt.plot(bin_centers, hist, 'b-', lw=2)
+            plt.plot(r_grid, pdf, 'b-', lw=2)
             xlabel = r"$R$ ($\mathrm{\AA}$)"
-            ylabel = "Probability Density" if density else "Counts"
+            ylabel = "Probability Density"
             tool.format_subplot(xlabel, ylabel,
-                                "End-to-End Distance Distribution")
+                                "End-to-End Distance Distribution (KDE)")
             plt.show()
 
         if return_data:
-            return bin_centers, hist
+            return r_grid, pdf
 
     def _compute_full_rotation_moments(self, fitf, limit=1000):
         """

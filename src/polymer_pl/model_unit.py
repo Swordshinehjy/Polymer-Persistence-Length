@@ -8,6 +8,7 @@ from scipy.integrate import cumulative_trapezoid, quad
 from scipy.interpolate import interp1d
 from . import tool
 from scipy.optimize import curve_fit
+from scipy.stats import gaussian_kde
 try:
     from . import chain_rotation_fk as chain_fk
 except ImportError:
@@ -649,40 +650,49 @@ class PolymerPersistenceUnit:
             return r2
 
     def calc_end_to_end_distribution(self,
-                                     n_repeat_units=20,
-                                     n_samples=150000,
-                                     bins=100,
-                                     density=True,
-                                     plot=True,
-                                     return_data=False,
-                                     use_cython=True):
+                                 n_repeat_units=20,
+                                 n_samples=150000,
+                                 grid_points=400,
+                                 bw_method='scott',
+                                 plot=True,
+                                 return_data=False,
+                                 use_cython=True):
         """
-        Calculate the distribution of end-to-end distance (R)
-        for the FULL chain length.
+        Calculate smooth end-to-end distance distribution using KDE.
 
         Parameters
         ----------
-        density : bool
-            If True, normalize histogram to PDF.
+        grid_points : int
+            Number of points for KDE evaluation grid.
+        bw_method : str or float
+            Bandwidth for gaussian_kde ('scott', 'silverman', or float).
         """
-        r2_results = self._square_end_to_end_distance(n_repeat_units,
-                                                      n_samples, use_cython)
+
+        # 1. Generate end-to-end distances
+        r2_results = self._square_end_to_end_distance(
+            n_repeat_units, n_samples, use_cython
+        )
         r2_full = r2_results[:, -1]
         values = np.sqrt(r2_full)
-        hist, bin_edges = np.histogram(values, bins=bins, density=density)
-        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+        kde = gaussian_kde(values, bw_method=bw_method)
+
+        r_min, r_max = values.min(), values.max()
+        r_grid = np.linspace(r_min, r_max, grid_points)
+        pdf = kde(r_grid)
 
         if plot:
             plt.figure(figsize=(6, 5))
-            plt.plot(bin_centers, hist, 'b-', lw=2)
+            plt.plot(r_grid, pdf, 'b-', lw=2)
             xlabel = r"$R$ ($\mathrm{\AA}$)"
-            ylabel = "Probability Density" if density else "Counts"
-            tool.format_subplot(xlabel, ylabel,
-                                "End-to-End Distance Distribution")
+            ylabel = "Probability Density"
+            tool.format_subplot(
+                xlabel, ylabel, "End-to-End Distance Distribution (KDE)"
+            )
             plt.show()
 
         if return_data:
-            return bin_centers, hist
+            return r_grid, pdf
 
     def calc_mean_end_to_end_monte_carlo(self,
                                          n_repeat_units=20,
