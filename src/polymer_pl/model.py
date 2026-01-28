@@ -47,7 +47,7 @@ class PolymerPersistence:
             bond_lengths (list or np.ndarray): The lengths of the bonds in the repeat unit.
             bond_angles_deg (list or np.ndarray): The deflection angles between bonds in degrees.
             temperature (int, optional): The temperature in Kelvin. Defaults to 300.
-            rotaion_types (list or np.ndarray, optional): An array of integers mapping each bond to a
+            rotation_types (list or np.ndarray, optional): An array of integers mapping each bond to a
                                                  specific rotational potential profile. A value of 0
                                                  indicates a fixed bond with no rotation.
             rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
@@ -87,7 +87,7 @@ class PolymerPersistence:
                         f"Warning: RIS data file not found. Skipping RIS type {rot_id}."
                     )
                     continue
-        # --- Internal cache for lazy evaluation ---
+
         self._Mmat = None
         self._A_list = None
         self._K_list = None  # List of <T (kron) T> matrices
@@ -732,8 +732,9 @@ class PolymerPersistence:
                                     n_repeat_units,
                                     n_samples,
                                     use_cython=True):
-        if self.bond_lengths is None or chain_rotation is None:
-            print("Bond lengths and chain_rotation must be set.")
+        if self.bond_lengths is None:
+            raise ValueError("Bond lengths must be provided for this method.")
+        if chain_rotation is None:
             use_cython = False
         length = len(self.bond_angles_rad)
         ch = self.generate_chain(n_repeat_units)
@@ -880,11 +881,8 @@ class PolymerPersistence:
             Number of repeat units in the polymer chain. Default is 20.
         n_samples : int, optional
             Number of Monte Carlo samples to generate. Default is 150,000.
-        method: str, Sampling method to use. Options:
-            - 'independent': Original independent sampling (fast, noisy)
-            - 'stratified': Stratified sampling (reduces noise in flexible systems)
-        **sampling_kwargs : dict
-            Additional parameters for sampling method (e.g., burnin, thin for MCMC)
+        use_cython : bool, optional
+            Whether to use Cython optimized version. Default is True.
         Returns:
         --------
         float
@@ -1026,11 +1024,10 @@ class PolymerPersistence:
             Starting index for fitting. Default is 1.
         end_idx : int, optional
             Ending index for fitting. Default is 10.
-        method: str, Sampling method to use. Options:
-            - 'independent': Original independent sampling (fast, noisy)
-            - 'stratified': Stratified sampling (reduces noise in flexible systems)
-        **sampling_kwargs : dict
-            Additional parameters for sampling method (e.g., burnin, thin for MCMC)
+        return_data : bool, optional
+            Whether to return the correlation function data. Default is False.
+        use_cython : bool, optional
+            Whether to use Cython for optimized calculations. Default is True.
         """
         try:
             if chain_rotation is None:
@@ -1347,11 +1344,11 @@ class PolymerPersistence:
 
         r_min, r_max = values.min(), values.max()
         r_grid = np.linspace(r_min, r_max, grid_points)
-        pdf = kde(r_grid)
+        rdf = kde(r_grid)
 
         if plot:
             plt.figure(figsize=(6, 5))
-            plt.plot(r_grid, pdf, 'b-', lw=2)
+            plt.plot(r_grid, rdf, 'b-', lw=2)
             xlabel = r"$R$ ($\mathrm{\AA}$)"
             ylabel = "Probability Density"
             tool.format_subplot(xlabel, ylabel,
@@ -1359,7 +1356,7 @@ class PolymerPersistence:
             plt.show()
 
         if return_data:
-            return r_grid, pdf
+            return r_grid, rdf
 
     def _compute_full_rotation_moments(self, fitf, limit=1000):
         """
@@ -1693,7 +1690,9 @@ class PolymerPersistence:
                                                n_samples=150000):
         """
         Fit the Worm-like Chain model to Monte Carlo simulation results.
-
+        Args:
+            n_repeat_units (int): Number of repeat units.
+            n_samples (int): Number of samples.
         Returns:
             N_eff (float): Persistence length (in units of repeat units).
             alpha (float): Scaling factor (sqrt of alpha_sq).

@@ -402,7 +402,7 @@ class PolymerPersistenceFK:
                  'b--',
                  linewidth=2,
                  alpha=0.7,
-                 label=f'zeta = {corr_length:.6f}')
+                 label=f'Np = {corr_length:.6f}')
         tool.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
                             "Log of Correlation Function")
         plt.show()
@@ -550,7 +550,6 @@ class PolymerPersistenceFK:
             Bandwidth for gaussian_kde ('scott', 'silverman', or float).
         """
 
-        # 1. Generate end-to-end distances
         r2_results = self._square_end_to_end_distance(
             n_repeat_units, n_samples, use_cython
         )
@@ -561,11 +560,11 @@ class PolymerPersistenceFK:
 
         r_min, r_max = values.min(), values.max()
         r_grid = np.linspace(r_min, r_max, grid_points)
-        pdf = kde(r_grid)
+        rdf = kde(r_grid)
 
         if plot:
             plt.figure(figsize=(6, 5))
-            plt.plot(r_grid, pdf, 'b-', lw=2)
+            plt.plot(r_grid, rdf, 'b-', lw=2)
             xlabel = r"$R$ ($\mathrm{\AA}$)"
             ylabel = "Probability Density"
             tool.format_subplot(
@@ -574,7 +573,7 @@ class PolymerPersistenceFK:
             plt.show()
 
         if return_data:
-            return r_grid, pdf
+            return r_grid, rdf
 
     def calc_mean_end_to_end_monte_carlo(self,
                                          n_repeat_units=20,

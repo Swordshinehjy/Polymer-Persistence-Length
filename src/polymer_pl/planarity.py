@@ -30,7 +30,7 @@ class PolymerPlanarity:
 
         Args:
             temperature (int, optional): The temperature in Kelvin. Defaults to 300.
-            rotaion_types (list or np.ndarray, optional): An array of integers mapping each bond to a
+            rotation_types (list or np.ndarray, optional): An array of integers mapping each bond to a
                                                  specific rotational potential profile. A value of 0
                                                  indicates a fixed bond with no rotation.
             rotation_labels (dict, optional): A dictionary mapping rotation_types to data files.
