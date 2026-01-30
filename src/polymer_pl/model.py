@@ -184,79 +184,6 @@ class PolymerPersistence:
                 )
                 continue
 
-    def _prepare_full_data(self):
-        """Sets up interpolation functions from data files."""
-        if self._full_data:
-            return
-        for rot_id, info in self.rotation_labels.items():
-            if info.get('type') == 'ris':
-                continue
-            try:
-                if 'fitf' in info:
-                    fitf = info['fitf']
-                    data = np.empty((0, 2))
-                else:
-                    if 'data' in info:
-                        data = self._update_dihedral(info['data'])
-                    elif 'loc' in info:
-                        data = self._read_data(Path(info['loc']))
-                    else:
-                        raise ValueError(
-                            f"Either 'data' or 'loc' must be provided for rotation type {rot_id}."
-                        )
-                    x, y = data[:, 0], data[:, 1]
-                    if self.fitting_method == 'interpolation':
-                        fitf = interp1d(x,
-                                        y,
-                                        kind='cubic',
-                                        fill_value="extrapolate")
-                    elif self.fitting_method == 'cosine':
-                        p = np.polynomial.polynomial.polyfit(
-                            np.cos(np.deg2rad(x)), y, self.param_n)
-                        fitf = (
-                            lambda p_val: lambda z: np.polynomial.polynomial.
-                            polyval(np.cos(np.deg2rad(z)), p_val))(p)
-                    elif self.fitting_method == 'fourier':
-                        rad = np.deg2rad(x)
-                        a = np.column_stack(
-                            [np.cos(n * rad) for n in range(self.param_n + 1)])
-                        coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
-                        fitf = (lambda c, ord_val: lambda z: np.sum([
-                            c[n] * np.cos(n * np.deg2rad(z))
-                            for n in range(ord_val + 1)
-                        ],
-                                                                    axis=0)
-                                )(coeffs, self.param_n)
-                norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval),
-                                   0,
-                                   360,
-                                   limit=1000)
-                x_values = np.linspace(0, 360, 1000)
-                prob_vals = np.exp(-fitf(x_values) / self.kTval) / norm_val
-                cum_dist = cumulative_trapezoid(prob_vals, x_values, initial=0)
-                norm_cdf = cum_dist / cum_dist[-1]
-                unique_cdf_vals, unique_indices = np.unique(norm_cdf,
-                                                            return_index=True)
-                corresponding_x_vals = x_values[unique_indices]
-                inv_cdf = interp1d(unique_cdf_vals,
-                                   corresponding_x_vals,
-                                   kind='cubic',
-                                   fill_value="extrapolate")
-                self._full_data[rot_id] = {
-                    'fitf': fitf,
-                    'original': data,
-                    'prob_vals': prob_vals,
-                    "inv_cdf": inv_cdf,
-                    "x_values": x_values,
-                    "cum_dist": cum_dist,
-                    **info
-                }
-            except FileNotFoundError:
-                print(
-                    f"Warning: Data file not found. Skipping rotation type {rot_id}."
-                )
-                continue
-
     def _compute_rotation_integrals(self, fitf, limit=1000):
         """Calculates the Boltzmann-averaged <cos(phi)> and <sin(phi)>."""
 
@@ -572,6 +499,7 @@ class PolymerPersistence:
 
     @property
     def average_unit_length(self):
+        """The length of average unit vector."""
         return np.linalg.norm(self.average_unit_vector)
 
     @property
@@ -592,6 +520,7 @@ class PolymerPersistence:
 
     @property
     def persistence_length(self):
+        """The geometric persistence length."""
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
         return self.calculate_persistence_length()
@@ -624,48 +553,6 @@ class PolymerPersistence:
             wlc = np.inf
         return wlc
 
-    def plot_dihedral_potentials(self):
-        """Plot dihedral potentials and their probability distributions."""
-        if not self._full_data:
-            self._prepare_full_data()
-        plt.figure(figsize=(18, 5))
-        plt.subplot(1, 3, 1)
-        for key, data in self._full_data.items():
-            plt.plot(data['original'][:, 0],
-                     data['original'][:, 1],
-                     f"{data['color']}",
-                     marker="o",
-                     linestyle="None",
-                     label=data['label'])
-            plt.plot(data['x_values'],
-                     data['fitf'](data['x_values']),
-                     color=f"{data['color']}",
-                     linestyle="--")
-        tool.format_subplot("Dihedral Angle [Deg.]",
-                            "Dihedral Potential (kJ/mol)",
-                            "Dihedral Potentials")
-        plt.subplot(1, 3, 2)
-        for key, data in self._full_data.items():
-            plt.plot(data['x_values'],
-                     data['prob_vals'],
-                     color=f"{data['color']}",
-                     linestyle="-",
-                     label=data['label'])
-        tool.format_subplot("Angle [deg.]", "Probability",
-                            "Probability Distributions")
-        plt.subplot(1, 3, 3)
-        for key, data in self._full_data.items():
-            plt.plot(data['cum_dist'] / data['cum_dist'][-1],
-                     data['x_values'],
-                     color=f"{data['color']}",
-                     linestyle="-",
-                     label=data['label'])
-        tool.format_subplot("Probability", "Dihedral Angle [deg.]",
-                            "Cumulative Probability Distributions")
-
-        plt.tight_layout()
-        plt.show()
-
     def report(self):
         """Prints a summary of the calculation results."""
         # Ensure calculation has been run
@@ -684,83 +571,6 @@ class PolymerPersistence:
             )
             print(f"Conformational Parameter: {self.conformational_param:.6f}")
         print("-----------------------------------------------")
-
-    def generate_chain(self, n_repeat_units):
-        """Generate a polymer chain with n_repeat_units."""
-        bonds = self.bond_lengths if self.bond_lengths is not None else np.array(
-            [1.0] * len(self.bond_angles_rad))
-        l_array = np.tile(bonds, n_repeat_units)
-        vectors = np.hstack((l_array[:, None], np.zeros(
-            (l_array.shape[0], 2))))
-        all_angle = np.tile(self.bond_angles_rad, n_repeat_units)
-        angles = np.cumsum(all_angle)
-        cos_angles = np.cos(angles)
-        sin_angles = np.sin(angles)
-        rotated_x = vectors[:, 0] * cos_angles - vectors[:, 1] * sin_angles
-        rotated_y = vectors[:, 0] * sin_angles + vectors[:, 1] * cos_angles
-        rotated_z = vectors[:, 2]
-        segments = np.column_stack((rotated_x, rotated_y, rotated_z))
-        return np.cumsum(np.vstack((np.array([[0, 0, 0]]), segments)), axis=0)
-
-    def pre_generate_angles(self, n_samples, flat_rotation):
-        """Generate angles for all rotation types (continuous and RIS)."""
-        self._prepare_full_data()
-        num_positions = len(flat_rotation)
-        rng = np.random.default_rng()
-        rand_vals = rng.random((n_samples, num_positions))
-        angles_per_position = np.zeros((n_samples, num_positions))
-        # Handle continuous rotation types
-        for rot_id, data_type in self._full_data.items():
-            mask = flat_rotation == rot_id
-            if np.any(mask):
-                inv_cdf = data_type['inv_cdf']
-                angles_per_position[:, mask] = inv_cdf(rand_vals[:, mask])
-        # Handle RIS types
-        for rot_id, (ang_deg, energies) in self.ris_data.items():
-            mask = (flat_rotation == rot_id)
-            if not np.any(mask):
-                continue
-            boltz = np.exp(-energies / self.kTval)
-            prob = boltz / boltz.sum()
-            sampled = rng.choice(ang_deg,
-                                 size=(n_samples, np.sum(mask)),
-                                 p=prob)
-            angles_per_position[:, mask] = sampled
-        return angles_per_position
-
-    def _square_end_to_end_distance(self,
-                                    n_repeat_units,
-                                    n_samples,
-                                    use_cython=True):
-        if self.bond_lengths is None:
-            raise ValueError("Bond lengths must be provided for this method.")
-        if chain_rotation is None:
-            use_cython = False
-        length = len(self.bond_angles_rad)
-        ch = self.generate_chain(n_repeat_units)
-        batch_size = 1000
-        n_batches = n_samples // batch_size
-        n_jobs = psutil.cpu_count(logical=False)
-        flat_rotation = np.concatenate([
-            [0], self.rotation_types[np.arange(len(ch) - 1) % length]
-        ])[:-1].astype(np.int64)
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
-        if use_cython:
-            r2List = Parallel(n_jobs=n_jobs, verbose=1)(
-                delayed(chain_rotation.batch_r2_cython)(
-                    np.ascontiguousarray(ch, dtype=np.float64),
-                    np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
-                                                    batch_size],
-                                         dtype=np.float64), length)
-                for i in range(n_batches))
-            return np.vstack(r2List)
-        else:
-            coords = Parallel(n_jobs=n_jobs, verbose=1)(
-                delayed(tool.randomRotate)(ch, all_angles[i], flat_rotation)
-                for i in range(n_samples))
-            # np.array(coords) (n_samples, n_repeat_units, 3)
-            r2List = np.sum(np.array(coords)**2, axis=-1)
-            return r2List[:, np.arange(0, r2List.shape[1], length)]
 
     def calc_mean_square_end_to_end_distance(self,
                                              n_repeat_units=20,
@@ -785,346 +595,6 @@ class PolymerPersistence:
         else:
             raise ValueError(
                 "Invalid mode. Please choose 'MonteCarlo' or 'TransferMatrix'")
-
-    def calc_mean_square_end_to_end_monte_carlo(self,
-                                                n_repeat_units=20,
-                                                n_samples=150000,
-                                                plot=True,
-                                                return_data=False):
-        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
-        Args:
-           n_repeat_units (int): Maximum number of repeat units to plot
-           n_samples (int): Number of samples to use in Monte Carlo simulation
-           plot (bool): If True, plots the mean square end-to-end distance
-           return_data (bool): If True, returns the mean square end-to-end distance values as a list
-        """
-        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
-        msd_values = np.mean(r2List, axis=0)
-        n_repeats = np.arange(0, n_repeat_units + 1)
-        if plot:
-            plt.figure(figsize=(6, 5))
-            plt.plot(n_repeats,
-                     msd_values,
-                     linewidth=2,
-                     color='blue',
-                     marker='o')
-            tool.format_subplot("Number of Repeat Units (N)",
-                                "Mean Square End-to-End Distance (Å²)",
-                                "Monte Carlo Simulation of <R²>")
-            plt.tight_layout()
-            plt.show()
-        if return_data:
-            return msd_values
-
-    def calc_mean_end_to_end_monte_carlo(self,
-                                         n_repeat_units=20,
-                                         n_samples=150000,
-                                         plot=True,
-                                         return_data=False):
-        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
-        Args:
-           n_repeat_units (int): Maximum number of repeat units to plot
-           n_samples (int): Number of samples to use in Monte Carlo simulation
-           plot (bool): If True, plots the mean end-to-end distance
-           return_data (bool): If True, returns the mean end-to-end distance values as a list
-        """
-        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
-        r = np.mean(np.sqrt(r2List), axis=0)
-        n_repeats = np.arange(0, n_repeat_units + 1)
-        if plot:
-            plt.figure(figsize=(6, 5))
-            plt.plot(n_repeats, r, linewidth=2, color='blue', marker='o')
-            tool.format_subplot("Number of Repeat Units (N)",
-                                "Mean End-to-End Distance (Å)",
-                                "Monte Carlo Simulation of <R>")
-            plt.tight_layout()
-            plt.show()
-        if return_data:
-            return r
-
-    def calc_mean_r4_monte_carlo(self,
-                                 n_repeat_units=20,
-                                 n_samples=150000,
-                                 plot=True,
-                                 return_data=False):
-        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
-        Args:
-           n_repeat_units (int): Maximum number of repeat units to plot
-           n_samples (int): Number of samples to use in Monte Carlo simulation
-           plot (bool): If True, plots the <R^4> values
-           return_data (bool): If True, returns the <R^4> as a list
-        """
-        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
-        r4 = np.mean(r2List**2, axis=0)
-        n_repeats = np.arange(0, n_repeat_units + 1)
-        if plot:
-            plt.figure(figsize=(6, 5))
-            plt.plot(n_repeats, r4, linewidth=2, color='blue', marker='o')
-            tool.format_subplot("Number of Repeat Units (N)",
-                                "<R$^4$> (Å$^4$)",
-                                "Monte Carlo Simulation of <R$^4$>")
-            plt.tight_layout()
-            plt.show()
-        if return_data:
-            return r4
-
-    def calculate_correlation_length_mc(self,
-                                        n_repeat_units=20,
-                                        n_samples=150000,
-                                        use_cython=True):
-        """
-        Calculate correlation length using Monte Carlo sampling.
-        
-        Parameters:
-        -----------
-        n_repeat_units : int, optional
-            Number of repeat units in the polymer chain. Default is 20.
-        n_samples : int, optional
-            Number of Monte Carlo samples to generate. Default is 150,000.
-        use_cython : bool, optional
-            Whether to use Cython optimized version. Default is True.
-        Returns:
-        --------
-        float
-            The calculated correlation length in units of repeat units.
-        """
-        if chain_rotation is None:
-            print(
-                "Error: chain_rotation module not available. Monte Carlo simulation cannot be performed."
-            )
-            use_cython = False
-
-        # Generate the base chain
-        ch = self.generate_chain(n_repeat_units)
-        length = len(self.bond_angles_rad)
-
-        # Prepare rotation mapping for the chain
-        flat_rotation = np.concatenate([
-            [0], self.rotation_types[np.arange(len(ch) - 1) % length]
-        ])[:-1].astype(np.int64)
-        # Pre-generate all angles
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
-
-        print(f"Calculating {n_samples} samples...")
-        print(f"Using {psutil.cpu_count(logical=False)} CPU cores")
-
-        # Parallel computation using Cython optimized versionable_memory * 0.5 / sampl
-        batch_size = 1000
-        n_batches = n_samples // batch_size
-        n_jobs = psutil.cpu_count(logical=False)
-        if use_cython:
-            cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
-                delayed(self._batch_cosVals_optimized)
-                (ch, all_angles[i * batch_size:(i + 1) * batch_size], length)
-                for i in range(n_batches))
-            cosList2 = np.vstack(cosList2)
-        else:
-            coords = Parallel(n_jobs=n_jobs, verbose=1)(
-                delayed(tool.randomRotate)(ch, all_angles[i], flat_rotation)
-                for i in range(n_samples))
-            # np.array(coords) shape (n_samples, n_repeat_units, 3)
-            all_coords = np.array(coords)
-            k_values = np.arange(length, ch.shape[0], length)
-            vectors = all_coords[:, k_values, :] - all_coords[:, k_values -
-                                                              length, :]
-            v_ref = vectors[:, 0:1, :]
-            dots = np.sum(vectors * v_ref, axis=2)
-            norms = np.linalg.norm(vectors, axis=2) * np.linalg.norm(v_ref,
-                                                                     axis=2)
-            cosList2 = np.clip(dots / norms, -1, 1)
-        # Calculate correlation length
-        corr2 = np.mean(cosList2, axis=0)
-        repeat_units = np.arange(len(corr2))
-        start_idx = 1
-        end_idx = 10
-
-        # Fit exponential decay to correlation function
-        p = np.polynomial.polynomial.polyfit(repeat_units[start_idx:end_idx],
-                                             np.log(corr2[start_idx:end_idx]),
-                                             1)
-
-        corr_length = -1 / p[1]
-
-        print(f"\nMonte Carlo Result:")
-        print(f"slope: {p[1]:.6f}")
-        print(f"Correlation Length: {corr_length:.2f}")
-
-        return corr_length
-
-    def _batch_cosVals_optimized(self, ch, all_angles, length):
-        """Batch processing function optimized with Cython."""
-        if chain_rotation is None:
-            raise ImportError("chain_rotation module not available")
-        return chain_rotation.batch_cosVals_cython(
-            np.ascontiguousarray(ch, dtype=np.float64),
-            np.ascontiguousarray(all_angles, dtype=np.float64), length)
-
-    def calculate_contact_map_mc(
-        self,
-        n_repeat_units=20,
-        n_samples=20000,
-    ):
-        ch = self.generate_chain(n_repeat_units)
-        length = len(self.bond_angles_rad)
-
-        flat_rotation = np.concatenate([
-            [0], self.rotation_types[np.arange(len(ch) - 1) % length]
-        ])[:-1].astype(np.int64)
-
-        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
-        c = np.zeros((n_repeat_units, n_repeat_units))
-        unit_idx = np.arange(0, n_repeat_units * length + 1, length)
-        for i in range(n_samples):
-            pos = chain_rotation.randomRotate_cython(ch, all_angles[i])
-            r = pos[unit_idx]
-            u = r[1:] - r[:-1]
-            u /= np.linalg.norm(u, axis=1, keepdims=True)
-            c[:len(u), :len(u)] += u @ u.T
-        return c / n_samples
-
-    def plot_contact_map_mc(self, n_units=20, n_samples=100):
-        plt.figure(figsize=(6, 5))
-        im = plt.imshow(self.calculate_contact_map_mc(n_units, n_samples),
-                        vmin=-1,
-                        vmax=1,
-                        cmap="coolwarm",
-                        interpolation="bicubic")
-        plt.xlabel("i", fontsize=14, fontfamily="Helvetica")
-        plt.ylabel("j", fontsize=14, fontfamily="Helvetica")
-        plt.xticks(fontsize=14, fontfamily="Helvetica")
-        plt.yticks(fontsize=14, fontfamily="Helvetica")
-        plt.title("Contact Map", fontsize=16, fontfamily="Helvetica")
-        cbar = plt.colorbar(im)
-        cbar.set_label(r"$\hat v_i \cdot \hat v_j$",
-                       fontsize=14,
-                       fontfamily="Helvetica")
-        cbar.ax.tick_params(labelsize=14)
-        plt.setp(cbar.ax.get_yticklabels(), fontfamily="Helvetica")
-        plt.minorticks_on()
-        plt.tight_layout()
-        plt.show()
-
-    def plot_correlation_function(self,
-                                  n_repeat_units=20,
-                                  n_samples=150000,
-                                  start_idx=1,
-                                  end_idx=10,
-                                  return_data=False,
-                                  use_cython=True):
-        """
-        Plot the correlation function and its exponential fit.
-        
-        Parameters:
-        -----------
-        n_repeat_units : int, optional
-            Number of repeat units in the polymer chain. Default is 20.
-        n_samples : int, optional
-            Number of Monte Carlo samples to generate. Default is 150,000.
-        start_idx : int, optional
-            Starting index for fitting. Default is 1.
-        end_idx : int, optional
-            Ending index for fitting. Default is 10.
-        return_data : bool, optional
-            Whether to return the correlation function data. Default is False.
-        use_cython : bool, optional
-            Whether to use Cython for optimized calculations. Default is True.
-        """
-        try:
-            if chain_rotation is None:
-                print(
-                    "Error: chain_rotation module not available. Plot cannot be generated."
-                )
-                use_cython = False
-
-            # Generate the base chain
-            ch = self.generate_chain(n_repeat_units)
-            length = len(self.bond_angles_rad)
-
-            # Prepare rotation mapping for the chain
-            flat_rotation = np.concatenate([
-                [0], self.rotation_types[np.arange(len(ch) - 1) % length]
-            ])[:-1].astype(np.int64)
-            # Pre-generate all angles
-            all_angles = self.pre_generate_angles(n_samples, flat_rotation)
-
-            # Parallel computation using Cython optimized version
-            batch_size = 1000
-            n_batches = n_samples // batch_size
-            n_jobs = psutil.cpu_count(logical=False)
-
-            if use_cython:
-                cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
-                    delayed(self._batch_cosVals_optimized)(
-                        ch, all_angles[i * batch_size:(i + 1) *
-                                       batch_size], length)
-                    for i in range(n_batches))
-                cosList2 = np.vstack(cosList2)
-            else:
-                coords = Parallel(n_jobs=n_jobs,
-                                  verbose=1)(delayed(tool.randomRotate)(
-                                      ch, all_angles[i], flat_rotation)
-                                             for i in range(n_samples))
-                # np.array(coords) shape (n_samples, n_repeat_units, 3)
-                all_coords = np.array(coords)
-                k_values = np.arange(length, ch.shape[0], length)
-                vectors = all_coords[:, k_values, :] - all_coords[:, k_values -
-                                                                  length, :]
-                v_ref = vectors[:, 0:1, :]
-                dots = np.sum(vectors * v_ref, axis=2)
-                norms = np.linalg.norm(vectors, axis=2) * np.linalg.norm(
-                    v_ref, axis=2)
-                cosList2 = np.clip(dots / norms, -1, 1)
-            # Calculate correlation function
-            corr2 = np.mean(cosList2, axis=0)
-            repeat_units = np.arange(len(corr2))
-
-            # Validate indices
-            end_idx = min(end_idx, len(corr2) - 1)
-            if start_idx >= end_idx:
-                print("Error: Invalid index range for fitting.")
-                return
-
-            # Check for valid correlation values
-            if np.any(corr2[start_idx:end_idx] <= 0):
-                print(
-                    "Warning: Some correlation values are non-positive, log transformation may fail."
-                )
-
-            # Fit exponential decay to correlation function
-            p = np.polynomial.polynomial.polyfit(
-                repeat_units[start_idx:end_idx],
-                np.log(corr2[start_idx:end_idx]), 1)
-
-            if p[1] == 0:
-                print(
-                    "Warning: Zero slope in fit, correlation length undefined."
-                )
-                corr_length = np.inf
-            else:
-                corr_length = -1 / p[1]
-
-            # Plotting
-            plt.figure(figsize=(6, 5))
-            plt.plot(repeat_units[start_idx:end_idx],
-                     np.log(corr2[start_idx:end_idx]),
-                     'bo',
-                     label='Log Correlation')
-            plt.plot(repeat_units[start_idx:end_idx],
-                     np.polynomial.polynomial.polyval(
-                         repeat_units[start_idx:end_idx], p),
-                     'b--',
-                     linewidth=2,
-                     alpha=0.7,
-                     label=f'Np = {corr_length:.5f}')
-            tool.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
-                                "Log of Correlation Function")
-            plt.show()
-            if return_data:
-                return corr2
-
-        except Exception as e:
-            print(f"Error in plot_correlation_function: {str(e)}")
-            return
 
     def calculate_exact_r2(self, n_repeats):
         """
@@ -1314,49 +784,6 @@ class PolymerPersistence:
         delta_r2 = s + n @ inv_I_minus_M @ p
         delta_r2_free = s1 + n1 @ inv_I_minus_M1 @ p1
         return np.sqrt(delta_r2 / delta_r2_free)
-
-    def calc_end_to_end_distribution(self,
-                                     n_repeat_units=20,
-                                     n_samples=150000,
-                                     grid_points=400,
-                                     bw_method='scott',
-                                     plot=True,
-                                     return_data=False,
-                                     use_cython=True):
-        """
-        Calculate smooth end-to-end distance distribution using KDE.
-
-        Parameters
-        ----------
-        grid_points : int
-            Number of points for KDE evaluation grid.
-        bw_method : str or float
-            Bandwidth for gaussian_kde ('scott', 'silverman', or float).
-        """
-
-        # 1. Generate end-to-end distances
-        r2_results = self._square_end_to_end_distance(n_repeat_units,
-                                                      n_samples, use_cython)
-        r2_full = r2_results[:, -1]
-        values = np.sqrt(r2_full)
-
-        kde = gaussian_kde(values, bw_method=bw_method)
-
-        r_min, r_max = values.min(), values.max()
-        r_grid = np.linspace(r_min, r_max, grid_points)
-        rdf = kde(r_grid)
-
-        if plot:
-            plt.figure(figsize=(6, 5))
-            plt.plot(r_grid, rdf, 'b-', lw=2)
-            xlabel = r"$R$ ($\mathrm{\AA}$)"
-            ylabel = "Probability Density"
-            tool.format_subplot(xlabel, ylabel,
-                                "End-to-End Distance Distribution (KDE)")
-            plt.show()
-
-        if return_data:
-            return r_grid, rdf
 
     def _compute_full_rotation_moments(self, fitf, limit=1000):
         """
@@ -1684,6 +1111,585 @@ class PolymerPersistence:
             plt.show()
         if return_data:
             return r4_array
+
+    #---------------------------------------------------------------#
+    #-------------------Monte Carlo Simulation----------------------#
+    #---------------------------------------------------------------#
+
+    def _prepare_full_data(self):
+        """Sets up interpolation functions from data files."""
+        if self._full_data:
+            return
+        for rot_id, info in self.rotation_labels.items():
+            if info.get('type') == 'ris':
+                continue
+            try:
+                if 'fitf' in info:
+                    fitf = info['fitf']
+                    data = np.empty((0, 2))
+                else:
+                    if 'data' in info:
+                        data = self._update_dihedral(info['data'])
+                    elif 'loc' in info:
+                        data = self._read_data(Path(info['loc']))
+                    else:
+                        raise ValueError(
+                            f"Either 'data' or 'loc' must be provided for rotation type {rot_id}."
+                        )
+                    x, y = data[:, 0], data[:, 1]
+                    if self.fitting_method == 'interpolation':
+                        fitf = interp1d(x,
+                                        y,
+                                        kind='cubic',
+                                        fill_value="extrapolate")
+                    elif self.fitting_method == 'cosine':
+                        p = np.polynomial.polynomial.polyfit(
+                            np.cos(np.deg2rad(x)), y, self.param_n)
+                        fitf = (
+                            lambda p_val: lambda z: np.polynomial.polynomial.
+                            polyval(np.cos(np.deg2rad(z)), p_val))(p)
+                    elif self.fitting_method == 'fourier':
+                        rad = np.deg2rad(x)
+                        a = np.column_stack(
+                            [np.cos(n * rad) for n in range(self.param_n + 1)])
+                        coeffs, *_ = np.linalg.lstsq(a, y, rcond=None)
+                        fitf = (lambda c, ord_val: lambda z: np.sum([
+                            c[n] * np.cos(n * np.deg2rad(z))
+                            for n in range(ord_val + 1)
+                        ],
+                                                                    axis=0)
+                                )(coeffs, self.param_n)
+                norm_val, _ = quad(lambda x: np.exp(-fitf(x) / self.kTval),
+                                   0,
+                                   360,
+                                   limit=1000)
+                x_values = np.linspace(0, 360, 1000)
+                prob_vals = np.exp(-fitf(x_values) / self.kTval) / norm_val
+                cum_dist = cumulative_trapezoid(prob_vals, x_values, initial=0)
+                norm_cdf = cum_dist / cum_dist[-1]
+                unique_cdf_vals, unique_indices = np.unique(norm_cdf,
+                                                            return_index=True)
+                corresponding_x_vals = x_values[unique_indices]
+                inv_cdf = interp1d(unique_cdf_vals,
+                                   corresponding_x_vals,
+                                   kind='cubic',
+                                   fill_value="extrapolate")
+                self._full_data[rot_id] = {
+                    'fitf': fitf,
+                    'original': data,
+                    'prob_vals': prob_vals,
+                    "inv_cdf": inv_cdf,
+                    "x_values": x_values,
+                    "cum_dist": cum_dist,
+                    **info
+                }
+            except FileNotFoundError:
+                print(
+                    f"Warning: Data file not found. Skipping rotation type {rot_id}."
+                )
+                continue
+
+    def plot_dihedral_potentials(self):
+        """Plot dihedral potentials and their probability distributions."""
+        if not self._full_data:
+            self._prepare_full_data()
+        plt.figure(figsize=(18, 5))
+        plt.subplot(1, 3, 1)
+        for key, data in self._full_data.items():
+            plt.plot(data['original'][:, 0],
+                     data['original'][:, 1],
+                     f"{data['color']}",
+                     marker="o",
+                     linestyle="None",
+                     label=data['label'])
+            plt.plot(data['x_values'],
+                     data['fitf'](data['x_values']),
+                     color=f"{data['color']}",
+                     linestyle="--")
+        tool.format_subplot("Dihedral Angle [Deg.]",
+                            "Dihedral Potential (kJ/mol)",
+                            "Dihedral Potentials")
+        plt.subplot(1, 3, 2)
+        for key, data in self._full_data.items():
+            plt.plot(data['x_values'],
+                     data['prob_vals'],
+                     color=f"{data['color']}",
+                     linestyle="-",
+                     label=data['label'])
+        tool.format_subplot("Angle [deg.]", "Probability",
+                            "Probability Distributions")
+        plt.subplot(1, 3, 3)
+        for key, data in self._full_data.items():
+            plt.plot(data['cum_dist'] / data['cum_dist'][-1],
+                     data['x_values'],
+                     color=f"{data['color']}",
+                     linestyle="-",
+                     label=data['label'])
+        tool.format_subplot("Probability", "Dihedral Angle [deg.]",
+                            "Cumulative Probability Distributions")
+
+        plt.tight_layout()
+        plt.show()
+
+    def pre_generate_angles(self, n_samples, flat_rotation):
+        """Generate angles for all rotation types (continuous and RIS)."""
+        self._prepare_full_data()
+        num_positions = len(flat_rotation)
+        rng = np.random.default_rng()
+        rand_vals = rng.random((n_samples, num_positions))
+        angles_per_position = np.zeros((n_samples, num_positions))
+        # Handle continuous rotation types
+        for rot_id, data_type in self._full_data.items():
+            mask = flat_rotation == rot_id
+            if np.any(mask):
+                inv_cdf = data_type['inv_cdf']
+                angles_per_position[:, mask] = inv_cdf(rand_vals[:, mask])
+        # Handle RIS types
+        for rot_id, (ang_deg, energies) in self.ris_data.items():
+            mask = (flat_rotation == rot_id)
+            if not np.any(mask):
+                continue
+            boltz = np.exp(-energies / self.kTval)
+            prob = boltz / boltz.sum()
+            sampled = rng.choice(ang_deg,
+                                 size=(n_samples, np.sum(mask)),
+                                 p=prob)
+            angles_per_position[:, mask] = sampled
+        return angles_per_position
+
+    def _square_end_to_end_distance(self,
+                                    n_repeat_units,
+                                    n_samples,
+                                    use_cython=True):
+        if self.bond_lengths is None:
+            raise ValueError("Bond lengths must be provided for this method.")
+        if chain_rotation is None:
+            use_cython = False
+        length = len(self.bond_angles_rad)
+        ch = self.generate_chain(n_repeat_units)
+        batch_size = 1000
+        n_batches = n_samples // batch_size
+        n_jobs = psutil.cpu_count(logical=False)
+        flat_rotation = np.concatenate([
+            [0], self.rotation_types[np.arange(len(ch) - 1) % length]
+        ])[:-1].astype(np.int64)
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+        if use_cython:
+            r2List = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(chain_rotation.batch_r2_cython)(
+                    np.ascontiguousarray(ch, dtype=np.float64),
+                    np.ascontiguousarray(all_angles[i * batch_size:(i + 1) *
+                                                    batch_size],
+                                         dtype=np.float64), length)
+                for i in range(n_batches))
+            return np.vstack(r2List)
+        else:
+            coords = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(tool.randomRotate)(ch, all_angles[i], flat_rotation)
+                for i in range(n_samples))
+            # np.array(coords) (n_samples, n_repeat_units, 3)
+            r2List = np.sum(np.array(coords)**2, axis=-1)
+            return r2List[:, np.arange(0, r2List.shape[1], length)]
+
+    def generate_chain(self, n_repeat_units):
+        """Generate a polymer chain with n_repeat_units."""
+        bonds = self.bond_lengths if self.bond_lengths is not None else np.array(
+            [1.0] * len(self.bond_angles_rad))
+        l_array = np.tile(bonds, n_repeat_units)
+        vectors = np.hstack((l_array[:, None], np.zeros(
+            (l_array.shape[0], 2))))
+        all_angle = np.tile(self.bond_angles_rad, n_repeat_units)
+        angles = np.cumsum(all_angle)
+        cos_angles = np.cos(angles)
+        sin_angles = np.sin(angles)
+        rotated_x = vectors[:, 0] * cos_angles - vectors[:, 1] * sin_angles
+        rotated_y = vectors[:, 0] * sin_angles + vectors[:, 1] * cos_angles
+        rotated_z = vectors[:, 2]
+        segments = np.column_stack((rotated_x, rotated_y, rotated_z))
+        return np.cumsum(np.vstack((np.array([[0, 0, 0]]), segments)), axis=0)
+
+    def calc_end_to_end_distribution(self,
+                                     n_repeat_units=20,
+                                     n_samples=150000,
+                                     grid_points=400,
+                                     bw_method='scott',
+                                     plot=True,
+                                     return_data=False,
+                                     use_cython=True):
+        """
+        Calculate smooth end-to-end distance distribution using KDE.
+
+        Parameters
+        ----------
+        grid_points : int
+            Number of points for KDE evaluation grid.
+        bw_method : str or float
+            Bandwidth for gaussian_kde ('scott', 'silverman', or float).
+        """
+
+        # 1. Generate end-to-end distances
+        r2_results = self._square_end_to_end_distance(n_repeat_units,
+                                                      n_samples, use_cython)
+        r2_full = r2_results[:, -1]
+        values = np.sqrt(r2_full)
+
+        kde = gaussian_kde(values, bw_method=bw_method)
+
+        r_min, r_max = values.min(), values.max()
+        r_grid = np.linspace(r_min, r_max, grid_points)
+        rdf = kde(r_grid)
+
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(r_grid, rdf, 'b-', lw=2)
+            xlabel = r"$R$ ($\mathrm{\AA}$)"
+            ylabel = "Probability Density"
+            tool.format_subplot(xlabel, ylabel,
+                                "End-to-End Distance Distribution (KDE)")
+            plt.show()
+
+        if return_data:
+            return r_grid, rdf
+
+    def calc_mean_square_end_to_end_monte_carlo(self,
+                                                n_repeat_units=20,
+                                                n_samples=150000,
+                                                plot=True,
+                                                return_data=False):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+           n_repeat_units (int): Maximum number of repeat units to plot
+           n_samples (int): Number of samples to use in Monte Carlo simulation
+           plot (bool): If True, plots the mean square end-to-end distance
+           return_data (bool): If True, returns the mean square end-to-end distance values as a list
+        """
+        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
+        msd_values = np.mean(r2List, axis=0)
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_repeats,
+                     msd_values,
+                     linewidth=2,
+                     color='blue',
+                     marker='o')
+            tool.format_subplot("Number of Repeat Units (N)",
+                                "Mean Square End-to-End Distance (Å²)",
+                                "Monte Carlo Simulation of <R²>")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return msd_values
+
+    def calc_mean_end_to_end_monte_carlo(self,
+                                         n_repeat_units=20,
+                                         n_samples=150000,
+                                         plot=True,
+                                         return_data=False):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+           n_repeat_units (int): Maximum number of repeat units to plot
+           n_samples (int): Number of samples to use in Monte Carlo simulation
+           plot (bool): If True, plots the mean end-to-end distance
+           return_data (bool): If True, returns the mean end-to-end distance values as a list
+        """
+        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
+        r = np.mean(np.sqrt(r2List), axis=0)
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_repeats, r, linewidth=2, color='blue', marker='o')
+            tool.format_subplot("Number of Repeat Units (N)",
+                                "Mean End-to-End Distance (Å)",
+                                "Monte Carlo Simulation of <R>")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return r
+
+    def calc_mean_r4_monte_carlo(self,
+                                 n_repeat_units=20,
+                                 n_samples=150000,
+                                 plot=True,
+                                 return_data=False):
+        """Plots the mean square end-to-end distance as a function of repeat units from 1 to N.
+        Args:
+           n_repeat_units (int): Maximum number of repeat units to plot
+           n_samples (int): Number of samples to use in Monte Carlo simulation
+           plot (bool): If True, plots the <R^4> values
+           return_data (bool): If True, returns the <R^4> as a list
+        """
+        r2List = self._square_end_to_end_distance(n_repeat_units, n_samples)
+        r4 = np.mean(r2List**2, axis=0)
+        n_repeats = np.arange(0, n_repeat_units + 1)
+        if plot:
+            plt.figure(figsize=(6, 5))
+            plt.plot(n_repeats, r4, linewidth=2, color='blue', marker='o')
+            tool.format_subplot("Number of Repeat Units (N)",
+                                "<R$^4$> (Å$^4$)",
+                                "Monte Carlo Simulation of <R$^4$>")
+            plt.tight_layout()
+            plt.show()
+        if return_data:
+            return r4
+
+    def calculate_correlation_length_mc(self,
+                                        n_repeat_units=20,
+                                        n_samples=150000,
+                                        use_cython=True):
+        """
+        Calculate correlation length using Monte Carlo sampling.
+        
+        Args:
+        -----------
+        n_repeat_units : int, optional
+            Number of repeat units in the polymer chain. Default is 20.
+        n_samples : int, optional
+            Number of Monte Carlo samples to generate. Default is 150,000.
+        use_cython : bool, optional
+            Whether to use Cython optimized version. Default is True.
+        Returns:
+        --------
+        float
+            The calculated correlation length in units of repeat units.
+        """
+        if chain_rotation is None:
+            print(
+                "Error: chain_rotation module not available. Monte Carlo simulation cannot be performed."
+            )
+            use_cython = False
+
+        # Generate the base chain
+        ch = self.generate_chain(n_repeat_units)
+        length = len(self.bond_angles_rad)
+
+        # Prepare rotation mapping for the chain
+        flat_rotation = np.concatenate([
+            [0], self.rotation_types[np.arange(len(ch) - 1) % length]
+        ])[:-1].astype(np.int64)
+        # Pre-generate all angles
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+
+        print(f"Calculating {n_samples} samples...")
+        print(f"Using {psutil.cpu_count(logical=False)} CPU cores")
+
+        # Parallel computation using Cython optimized versionable_memory * 0.5 / sampl
+        batch_size = 1000
+        n_batches = n_samples // batch_size
+        n_jobs = psutil.cpu_count(logical=False)
+        if use_cython:
+            cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(self._batch_cosVals_optimized)
+                (ch, all_angles[i * batch_size:(i + 1) * batch_size], length)
+                for i in range(n_batches))
+            cosList2 = np.vstack(cosList2)
+        else:
+            coords = Parallel(n_jobs=n_jobs, verbose=1)(
+                delayed(tool.randomRotate)(ch, all_angles[i], flat_rotation)
+                for i in range(n_samples))
+            # np.array(coords) shape (n_samples, n_repeat_units, 3)
+            all_coords = np.array(coords)
+            k_values = np.arange(length, ch.shape[0], length)
+            vectors = all_coords[:, k_values, :] - all_coords[:, k_values -
+                                                              length, :]
+            v_ref = vectors[:, 0:1, :]
+            dots = np.sum(vectors * v_ref, axis=2)
+            norms = np.linalg.norm(vectors, axis=2) * np.linalg.norm(v_ref,
+                                                                     axis=2)
+            cosList2 = np.clip(dots / norms, -1, 1)
+        # Calculate correlation length
+        corr2 = np.mean(cosList2, axis=0)
+        repeat_units = np.arange(len(corr2))
+        start_idx = 1
+        end_idx = 10
+
+        # Fit exponential decay to correlation function
+        p = np.polynomial.polynomial.polyfit(repeat_units[start_idx:end_idx],
+                                             np.log(corr2[start_idx:end_idx]),
+                                             1)
+
+        corr_length = -1 / p[1]
+
+        print(f"\nMonte Carlo Result:")
+        print(f"slope: {p[1]:.6f}")
+        print(f"Correlation Length: {corr_length:.2f}")
+
+        return corr_length
+
+    def _batch_cosVals_optimized(self, ch, all_angles, length):
+        """Batch processing function optimized with Cython."""
+        if chain_rotation is None:
+            raise ImportError("chain_rotation module not available")
+        return chain_rotation.batch_cosVals_cython(
+            np.ascontiguousarray(ch, dtype=np.float64),
+            np.ascontiguousarray(all_angles, dtype=np.float64), length)
+
+    def plot_correlation_function(self,
+                                  n_repeat_units=20,
+                                  n_samples=150000,
+                                  start_idx=1,
+                                  end_idx=10,
+                                  return_data=False,
+                                  use_cython=True):
+        """
+        Plot the correlation function and its exponential fit.
+        
+        Args:
+        -----------
+        n_repeat_units : int, optional
+            Number of repeat units in the polymer chain. Default is 20.
+        n_samples : int, optional
+            Number of Monte Carlo samples to generate. Default is 150,000.
+        start_idx : int, optional
+            Starting index for fitting. Default is 1.
+        end_idx : int, optional
+            Ending index for fitting. Default is 10.
+        return_data : bool, optional
+            Whether to return the correlation function data. Default is False.
+        use_cython : bool, optional
+            Whether to use Cython for optimized calculations. Default is True.
+        """
+        try:
+            if chain_rotation is None:
+                print(
+                    "Error: chain_rotation module not available. Plot cannot be generated."
+                )
+                use_cython = False
+
+            # Generate the base chain
+            ch = self.generate_chain(n_repeat_units)
+            length = len(self.bond_angles_rad)
+
+            # Prepare rotation mapping for the chain
+            flat_rotation = np.concatenate([
+                [0], self.rotation_types[np.arange(len(ch) - 1) % length]
+            ])[:-1].astype(np.int64)
+            # Pre-generate all angles
+            all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+
+            # Parallel computation using Cython optimized version
+            batch_size = 1000
+            n_batches = n_samples // batch_size
+            n_jobs = psutil.cpu_count(logical=False)
+
+            if use_cython:
+                cosList2 = Parallel(n_jobs=n_jobs, verbose=1)(
+                    delayed(self._batch_cosVals_optimized)(
+                        ch, all_angles[i * batch_size:(i + 1) *
+                                       batch_size], length)
+                    for i in range(n_batches))
+                cosList2 = np.vstack(cosList2)
+            else:
+                coords = Parallel(n_jobs=n_jobs,
+                                  verbose=1)(delayed(tool.randomRotate)(
+                                      ch, all_angles[i], flat_rotation)
+                                             for i in range(n_samples))
+                # np.array(coords) shape (n_samples, n_repeat_units, 3)
+                all_coords = np.array(coords)
+                k_values = np.arange(length, ch.shape[0], length)
+                vectors = all_coords[:, k_values, :] - all_coords[:, k_values -
+                                                                  length, :]
+                v_ref = vectors[:, 0:1, :]
+                dots = np.sum(vectors * v_ref, axis=2)
+                norms = np.linalg.norm(vectors, axis=2) * np.linalg.norm(
+                    v_ref, axis=2)
+                cosList2 = np.clip(dots / norms, -1, 1)
+            # Calculate correlation function
+            corr2 = np.mean(cosList2, axis=0)
+            repeat_units = np.arange(len(corr2))
+
+            # Validate indices
+            end_idx = min(end_idx, len(corr2) - 1)
+            if start_idx >= end_idx:
+                print("Error: Invalid index range for fitting.")
+                return
+
+            # Check for valid correlation values
+            if np.any(corr2[start_idx:end_idx] <= 0):
+                print(
+                    "Warning: Some correlation values are non-positive, log transformation may fail."
+                )
+
+            # Fit exponential decay to correlation function
+            p = np.polynomial.polynomial.polyfit(
+                repeat_units[start_idx:end_idx],
+                np.log(corr2[start_idx:end_idx]), 1)
+
+            if p[1] == 0:
+                print(
+                    "Warning: Zero slope in fit, correlation length undefined."
+                )
+                corr_length = np.inf
+            else:
+                corr_length = -1 / p[1]
+
+            # Plotting
+            plt.figure(figsize=(6, 5))
+            plt.plot(repeat_units[start_idx:end_idx],
+                     np.log(corr2[start_idx:end_idx]),
+                     'bo',
+                     label='Log Correlation')
+            plt.plot(repeat_units[start_idx:end_idx],
+                     np.polynomial.polynomial.polyval(
+                         repeat_units[start_idx:end_idx], p),
+                     'b--',
+                     linewidth=2,
+                     alpha=0.7,
+                     label=f'Np = {corr_length:.5f}')
+            tool.format_subplot("Repeat Units", r'Ln[$<V_0 \cdot V_n>$]',
+                                "Log of Correlation Function")
+            plt.show()
+            if return_data:
+                return corr2
+
+        except Exception as e:
+            print(f"Error in plot_correlation_function: {str(e)}")
+            return
+
+    def calculate_contact_map_mc(
+        self,
+        n_repeat_units=20,
+        n_samples=20000,
+    ):
+        ch = self.generate_chain(n_repeat_units)
+        length = len(self.bond_angles_rad)
+
+        flat_rotation = np.concatenate([
+            [0], self.rotation_types[np.arange(len(ch) - 1) % length]
+        ])[:-1].astype(np.int64)
+
+        all_angles = self.pre_generate_angles(n_samples, flat_rotation)
+        c = np.zeros((n_repeat_units, n_repeat_units))
+        unit_idx = np.arange(0, n_repeat_units * length + 1, length)
+        for i in range(n_samples):
+            pos = chain_rotation.randomRotate_cython(ch, all_angles[i])
+            r = pos[unit_idx]
+            u = r[1:] - r[:-1]
+            u /= np.linalg.norm(u, axis=1, keepdims=True)
+            c[:len(u), :len(u)] += u @ u.T
+        return c / n_samples
+
+    def plot_contact_map_mc(self, n_units=20, n_samples=100):
+        plt.figure(figsize=(6, 5))
+        im = plt.imshow(self.calculate_contact_map_mc(n_units, n_samples),
+                        vmin=-1,
+                        vmax=1,
+                        cmap="coolwarm",
+                        interpolation="bicubic")
+        plt.xlabel("i", fontsize=14, fontfamily="Helvetica")
+        plt.ylabel("j", fontsize=14, fontfamily="Helvetica")
+        plt.xticks(fontsize=14, fontfamily="Helvetica")
+        plt.yticks(fontsize=14, fontfamily="Helvetica")
+        plt.title("Contact Map", fontsize=16, fontfamily="Helvetica")
+        cbar = plt.colorbar(im)
+        cbar.set_label(r"$\hat v_i \cdot \hat v_j$",
+                       fontsize=14,
+                       fontfamily="Helvetica")
+        cbar.ax.tick_params(labelsize=14)
+        plt.setp(cbar.ax.get_yticklabels(), fontfamily="Helvetica")
+        plt.minorticks_on()
+        plt.tight_layout()
+        plt.show()
 
     def wormlikechain_fitting_from_monte_carlo(self,
                                                n_repeat_units=20,

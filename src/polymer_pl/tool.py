@@ -104,7 +104,7 @@ def compute_persistence_terpolymer(Mmat, prob):
 
     Mean-field approximation is used to combine the persistence lengths of the
     individual repeat units.
-    Parameters:
+    Args:
     -----------
     Mmat : listlike
         List of transformation matrices for each repeat unit type
@@ -159,7 +159,7 @@ def compute_persistence_terpolymer_Tscan(polymer_models,
     This function integrates temperature_scan and compute_persistence_terpolymer
     to calculate how the correlation length of a terpolymer changes with temperature.
     
-    Parameters:
+    Args:
     -----------
     polymer_models : listlike
         List of PolymerPersistence objects for each repeat unit type
@@ -285,7 +285,7 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
     """
     Compute correlation length for alternating matrices.
     
-    Parameters:
+    Args:
     -----------
     model1 : PolymerPersistence
         First model
@@ -361,14 +361,14 @@ def compute_persistence_alternating(model1, model2, temperature, plot=True):
 
 
 def compare_persistence_results(models, labels, temperature, property='corr'):
-    '''
+    """
     Compare persistence results between different models.
-    Arguments:
+    Args:
         models: List of persistence models.
         labels: List of labels for the models.
         ts: List of temperature arrays.
         property: Property to compare, 'corr', 'lp', 'lp_wlc'.
-    '''
+    """
     T_arr = np.atleast_1d(temperature).astype(np.float64)
     plt.figure(figsize=(6, 5))
     if property == 'corr':
@@ -409,7 +409,7 @@ def compute_r2_terpolymer_Tscan(polymer_models,
     This function integrates temperature_scan and compute_persistence_terpolymer
     to calculate how the mean square end-to-end distance of a terpolymer changes with temperature.
     
-    Parameters:
+    Args:
     -----------
     polymer_models : listlike
         List of PolymerPersistence objects for each repeat unit type

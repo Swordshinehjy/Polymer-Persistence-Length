@@ -14,9 +14,7 @@ class PolymerPlanarity:
     Calculates the correlation length of a polymer planarity based on its
     molecular structure and dihedral angle potentials.
 
-    This class encapsulates the calculations for determining the persistence
-    length from bond lengths, bond angles, and rotational potentials
-    using the matrix transformation method or the Monte Carlo method.
+    This class encapsulates the calculations for determining the planarity information.
     """
 
     def __init__(self,
@@ -522,14 +520,14 @@ def compare_planarity_results(models: List[PolymerPlanarity],
                               labels: List[str],
                               ts: Union[List[float], float],
                               property='planarity_corr_length'):
-    '''
+    """
     Compare planarity results between different models.
-    Arguments:
+    Args:
         models: List of planarity models.
         labels: List of labels for the models.
         ts: List of temperature arrays.
         property: Property to compare, e.g., 'planarity_corr_length', 'cos2'.
-    '''
+    """
     T_arr = np.atleast_1d(ts).astype(np.float64)
     plt.figure(figsize=(6, 5))
     for model, label in zip(models, labels):

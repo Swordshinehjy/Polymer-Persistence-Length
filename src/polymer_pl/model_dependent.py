@@ -23,8 +23,8 @@ class PolymerPersistenceDependentDefelection:
     molecular structure and dihedral angle potentials.
 
     This class encapsulates the calculations for determining the persistence
-    length from bond lengths, bond angles, and rotational potentials
-    using the matrix transformation method or the Monte Carlo method.
+    length from bond lengths, bond angles (dependent on dihedral angles), and rotational potentials
+    using the transfer matrix method.
     """
 
     def __init__(self,
@@ -92,7 +92,8 @@ class PolymerPersistenceDependentDefelection:
                 mask0 = self.deflection_types == ris_id
                 self.deflection_types[mask0] = 0
             mask = self.deflection_types == 0
-            self.deflection_types[mask] = np.roll(self.deflection_types, 1)[mask]
+            self.deflection_types[mask] = np.roll(self.deflection_types,
+                                                  1)[mask]
         else:
             self.deflection_types = np.array(deflection_types)
         # --- Internal cache for lazy evaluation ---
@@ -315,7 +316,8 @@ class PolymerPersistenceDependentDefelection:
                         if rot_id not in integral_cache:
                             fitf = self._computational_data[rot_id]['fitf']
                             integral_cache[
-                                rot_id] = self._compute_rotation_integrals(fitf)
+                                rot_id] = self._compute_rotation_integrals(
+                                    fitf)
                         m_i, s_i = integral_cache[rot_id]
 
             # Dihedral rotation matrix (around x-axis)
@@ -535,6 +537,7 @@ class PolymerPersistenceDependentDefelection:
 
     @property
     def average_unit_length(self):
+        """The length of average unit vector."""
         return np.linalg.norm(self.average_unit_vector)
 
     @property
@@ -555,6 +558,7 @@ class PolymerPersistenceDependentDefelection:
 
     @property
     def persistence_length(self):
+        """The geometric persistence length."""
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
         return self.calculate_persistence_length()

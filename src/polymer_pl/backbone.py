@@ -10,9 +10,7 @@ class PolymerBackbone:
     Calculates the backbone information of a polymer chain based on its
     molecular structure and dihedral angle potentials.
 
-    This class encapsulates the calculations for determining the persistence
-    length from bond lengths, bond angles, and rotational potentials
-    using the matrix transformation method or the Monte Carlo method.
+    This class encapsulates the calculations for determining the backbone information.
     """
 
     def __init__(self,

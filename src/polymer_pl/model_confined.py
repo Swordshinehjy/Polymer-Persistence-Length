@@ -15,8 +15,8 @@ class PolymerPersistenceConfined:
     molecular structure and dihedral angle potentials.
 
     This class encapsulates the calculations for determining the persistence
-    length from bond lengths, bond angles, and rotational potentials
-    using the matrix transformation method or the Monte Carlo method.
+    length from bond lengths, bond angles, and rotational potentials (confined)
+    using the transfer matrix method.
     """
 
     def __init__(self,
@@ -582,6 +582,7 @@ class PolymerPersistenceConfined:
 
     @property
     def average_unit_length(self):
+        """The length of average unit vector."""
         return np.linalg.norm(self.average_unit_vector)
 
     @property
@@ -602,6 +603,7 @@ class PolymerPersistenceConfined:
 
     @property
     def persistence_length(self):
+        """The geometric persistence length."""
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
         return self.calculate_persistence_length()

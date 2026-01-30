@@ -670,6 +670,7 @@ class PolymerPersistenceDependentDihedral:
 
     @property
     def average_unit_length(self):
+        """The length of average unit vector."""
         return np.linalg.norm(self.average_unit_vector)
 
     @property
@@ -690,6 +691,7 @@ class PolymerPersistenceDependentDihedral:
 
     @property
     def persistence_length(self):
+        """The geometric persistence length."""
         if self.bond_lengths is None:
             raise RuntimeError("Bond lengths not set.")
         return self.calculate_persistence_length()

@@ -18,7 +18,7 @@ except ImportError:
 
 class PolymerPersistenceUnit:
     """
-    Optimized version using Forward Kinematics for copolymer chains.
+    Forward Kinematics for multipolymer chains using units. ONLY for Monte Carlo.
     """
 
     def __init__(self,
@@ -35,7 +35,7 @@ class PolymerPersistenceUnit:
         """
         Initialize the polymer persistence model for copolymers.
         
-        Parameters:
+        Args:
         -----------
         unit_dict : dict
             Dictionary defining monomer units with 'bond', 'angle', 'rotation' keys
@@ -377,7 +377,7 @@ class PolymerPersistenceUnit:
         """
         NEW: Batch generate dihedral angles for multiple chains at once
         
-        Parameters:
+        Args:
         -----------
         chains_info : list of dict
             List of chain information dictionaries
@@ -446,7 +446,7 @@ class PolymerPersistenceUnit:
         """
         Build coordinates for a single copolymer chain (only recording unit endpoints)
         
-        Parameters:
+        Args:
         -----------
         chain_info : dict
             Dictionary containing 'bonds', 'angles', 'unit_lengths', 'mask'
@@ -621,7 +621,7 @@ class PolymerPersistenceUnit:
         """
         Calculate mean square end-to-end distance.
         
-        Parameters:
+        Args:
         -----------
         n_repeat_units : int
             Number of repeat units
@@ -650,13 +650,13 @@ class PolymerPersistenceUnit:
             return r2
 
     def calc_end_to_end_distribution(self,
-                                 n_repeat_units=20,
-                                 n_samples=150000,
-                                 grid_points=400,
-                                 bw_method='scott',
-                                 plot=True,
-                                 return_data=False,
-                                 use_cython=True):
+                                     n_repeat_units=20,
+                                     n_samples=150000,
+                                     grid_points=400,
+                                     bw_method='scott',
+                                     plot=True,
+                                     return_data=False,
+                                     use_cython=True):
         """
         Calculate smooth end-to-end distance distribution using KDE.
 
@@ -669,9 +669,8 @@ class PolymerPersistenceUnit:
         """
 
         # 1. Generate end-to-end distances
-        r2_results = self._square_end_to_end_distance(
-            n_repeat_units, n_samples, use_cython
-        )
+        r2_results = self._square_end_to_end_distance(n_repeat_units,
+                                                      n_samples, use_cython)
         r2_full = r2_results[:, -1]
         values = np.sqrt(r2_full)
 
@@ -686,9 +685,8 @@ class PolymerPersistenceUnit:
             plt.plot(r_grid, rdf, 'b-', lw=2)
             xlabel = r"$R$ ($\mathrm{\AA}$)"
             ylabel = "Probability Density"
-            tool.format_subplot(
-                xlabel, ylabel, "End-to-End Distance Distribution (KDE)"
-            )
+            tool.format_subplot(xlabel, ylabel,
+                                "End-to-End Distance Distribution (KDE)")
             plt.show()
 
         if return_data:
